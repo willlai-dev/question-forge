@@ -11,6 +11,8 @@ import { cn } from '@/lib/utils';
 const NAV = [
   { href: '/subjects', label: '科目與章節' },
   { href: '/question-groups', label: '題組' },
+  { href: '/questions', label: '題目' },
+  { href: '/imports', label: 'JSON 匯入' },
 ];
 
 /** 已登入頁面的共用外框：導覽列 + 未登入時導回登入頁。 */

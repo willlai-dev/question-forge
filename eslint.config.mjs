@@ -55,6 +55,18 @@ export default tseslint.config(
   },
 
   {
+    // node10 模組解析的 CommonJS 轉接檔，必須用 require/module.exports。
+    files: ['packages/*/server.js'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: { ...globals.node },
+    },
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+    },
+  },
+
+  {
     // 維運腳本與 API 端到端測試皆為 Node ESM（使用 JS 而非 TS）。
     files: ['scripts/**/*.mjs', 'tests/**/*.mjs'],
     languageOptions: {

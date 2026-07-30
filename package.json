@@ -27,7 +27,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "test:api-e2e": "node tests/api-e2e/phase1a.mjs",
+    "test:api-e2e": "node tests/api-e2e/phase1a.mjs && node tests/api-e2e/phase1b.mjs",
     "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm build"
   },
   "devDependencies": {

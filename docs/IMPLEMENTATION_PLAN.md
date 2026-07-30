@@ -65,7 +65,27 @@
 - 中文內容於 API ↔ PostgreSQL 之間往返正確
 - 未登入 → 401；缺 CSRF 標頭 → 403；再次初始化 → 410
 
-### Phase 1b 工作項目
+### Phase 1b ✅ 已完成
+
+| 項目 | 內容 |
+|---|---|
+| 題目 | CRUD、篩選分頁（關鍵字／科目／章節／題組／題型／狀態／reviewRequired／有無解析）、批次移動與刪除與標記、版本快照、`content_hash` |
+| 匯入 | 上傳 → 逐題驗證 → 暫存 → 預覽 → 修正／排除 → 重新驗證 → commit；另提供 `GET /imports/schema` 與 `GET /imports/prompt` |
+| 前端 | `/questions`、`/questions/new`、`/questions/[id]/edit`、`/imports`、`/imports/[id]` |
+| 測試 | 匯入驗證 44 個、content_hash 10 個單元測試；52 項 API 端到端驗證 |
+
+實測確認的關鍵行為：
+
+- **含錯誤的檔案上傳後，正式題庫題數完全沒有變化**；commit 回 `400 IMPORT_HAS_BLOCKING_ERRORS`
+- 修正單題後自動重新驗證整批，錯誤數即時下降
+- 排除錯誤題後即可 commit，且只寫入未被排除的題目
+- 重複 commit 回 `409`
+- 沒有解析的題目匯入後 `explanation` 仍為 `null`（系統不編造）
+- `reviewRequired` 正確帶入並在預覽頁醒目標示
+- 單選多答案／複選單答案／選項重複／選項不足／題號重複 皆被擋下
+- 批次移動會同步維護反正規化的 `subjectId` / `chapterId`
+
+### Phase 1b 原始工作項目
 
 1. **資料庫**：`users`、`refresh_tokens`、`app_settings`、`subjects`、`chapters`、`question_groups`、`questions`、`question_options`、`question_versions`、`question_sources`、`import_batches`、`import_questions`、`import_validation_issues`
    - 含複合外鍵 `question_groups(subject_id, chapter_id) → chapters(subject_id, id)`

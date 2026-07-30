@@ -52,6 +52,8 @@
 |---|---|---|
 | `AuthModule` ✅ | 首次初始化、登入、token 輪替、CSRF | P1a |
 | `QuestionBankModule` ✅ | 題庫階層（科目／章節／題組）CRUD 與排序 | P1a |
+| `QuestionsModule` ✅ | 題目 CRUD、搜尋篩選、批次操作、版本快照 | P1b |
+| `ImportsModule` ✅ | 上傳、逐題驗證、暫存、預覽、修正／排除、commit | P1b |
 | `QuestionsModule` | 題目 CRUD、搜尋、批次操作、版本快照 | P1 |
 | `ImportsModule` | 上傳、驗證、暫存、預覽、修正、commit | P1 |
 | `QuizModule` | 場次建立、出題、**判分**、交卷、結果 | P2 |

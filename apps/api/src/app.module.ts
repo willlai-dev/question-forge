@@ -7,7 +7,9 @@ import { InfraModule } from './infra/infra.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CsrfGuard, JwtAuthGuard } from './modules/auth/guards';
 import { HealthModule } from './modules/health/health.module';
+import { ImportsModule } from './modules/imports/imports.module';
 import { QuestionBankModule } from './modules/question-bank/question-bank.module';
+import { QuestionsModule } from './modules/questions/questions.module';
 
 /**
  * 應用程式根模組（模組化單體）。
@@ -19,7 +21,14 @@ import { QuestionBankModule } from './modules/question-bank/question-bank.module
  * Phase 2 之後依 docs/IMPLEMENTATION_PLAN.md 逐步擴充。
  */
 @Module({
-  imports: [InfraModule, AuthModule, HealthModule, QuestionBankModule],
+  imports: [
+    InfraModule,
+    AuthModule,
+    HealthModule,
+    QuestionBankModule,
+    QuestionsModule,
+    ImportsModule,
+  ],
   providers: [
     { provide: APP_PIPE, useClass: AppZodValidationPipe },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
