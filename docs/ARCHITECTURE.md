@@ -326,16 +326,22 @@ POST /ai/questions/:id/analyze
 
 ### TypeScript incremental 快取的陷阱（已處理）
 
-`tsc --noEmit`（typecheck）與 `tsc`（build）若共用同一個 `tsconfig.tsbuildinfo`，
-會出現這個難以察覺的錯誤：
+**`nest build` 的 `deleteOutDir: true` 與 tsconfig 的 `incremental: true` 本質衝突**：
 
-1. `pnpm verify` 先跑 typecheck，`--noEmit` 仍會寫入 tsbuildinfo，記錄「已是最新」。
-2. 接著跑 build，`nest build` 的 `deleteOutDir: true` 先刪掉 `dist`。
-3. tsc 讀 tsbuildinfo 認為無需重編，**什麼都不輸出**。
-4. 結果：`pnpm verify` 顯示成功，但 `dist` 是空的，`pnpm start` 直接失敗。
+1. 第一次建置：正常輸出 `dist`，並寫入 `tsconfig.tsbuildinfo`。
+2. 第二次建置：`deleteOutDir` 先刪掉 `dist`，但**刪除輸出檔案不會讓 tsbuildinfo 失效**。
+3. tsc 依快取判定「無需重編」，於是**什麼都不輸出**。
+4. 結果：`pnpm build` 回報成功（exit 0），但 `dist` 是空的，`pnpm start` 直接失敗。
 
-處理：所有 `typecheck` 腳本都加上 `--tsBuildInfoFile node_modules/.cache/typecheck.tsbuildinfo`，
-讓檢查與建置使用各自獨立的快取。
+這個問題特別難察覺，因為它**只在第二次之後才出現**——清掉快取跑一次會通過，
+讓人誤以為已經修好。驗證這類問題必須**連續執行至少兩次**。
+
+處理：`tsconfig.base.json` 設 `"incremental": false`。本專案完整建置只需數秒，
+用這點時間換取「build 成功就一定有產物」是划算的。
+
+> 相關但次要的問題：`tsc --noEmit`（typecheck）同樣會寫入 tsbuildinfo，
+> 也會影響後續 build。關閉 incremental 一併解決兩者，因此不需要為 typecheck
+> 另外指定 `--tsBuildInfoFile`。
 
 ### 本機沒有 psql
 

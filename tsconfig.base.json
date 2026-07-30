@@ -22,7 +22,12 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "incremental": true,
+
+    // 刻意關閉增量編譯。
+    // nest build 的 deleteOutDir 會先刪掉 dist，但刪除輸出「不會」讓 tsbuildinfo 失效，
+    // 於是第二次建置會判定「無需重編」而不輸出任何檔案 —— 結果 build 成功但 dist 是空的。
+    // 本專案建置只需數秒，用正確性換這點時間是划算的。
+    "incremental": false,
 
     "baseUrl": ".",
     "paths": {

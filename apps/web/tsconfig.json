@@ -14,7 +14,6 @@
     "noEmit": true,
     "declaration": false,
     "declarationMap": false,
-    "incremental": true,
     "plugins": [
       {
         "name": "next"
