@@ -43,8 +43,29 @@
 ## Phase 1：題庫核心
 
 **目標**：能登入、能建立題庫階層、能匯入題目。
+依使用者決定拆為 1a（認證與階層）與 1b（題目與匯入）兩段交付。
 
-### 工作項目
+### Phase 1a ✅ 已完成
+
+| 項目 | 內容 |
+|---|---|
+| 資料庫 | 13 張表全部建立並套用 migration（`0000_phase1_question_bank_core.sql`） |
+| Auth | 首次初始化頁面（建立後永久 410）、登入、refresh token 輪替與重放偵測、CSRF double-submit、argon2id |
+| 題庫階層 | 科目／章節／題組 CRUD、排序、軟刪除語意 |
+| 前端 | `/setup`、`/login`、`/subjects`（含章節管理）、`/question-groups` |
+| 測試 | 36 個單元測試 + 34 項 API 端到端驗證（`pnpm test:api-e2e`） |
+
+實測確認的關鍵行為：
+
+- 題組引用他科目章節 → 資料庫複合外鍵拒絕（PostgreSQL 23503），API 回 `409 CHAPTER_SUBJECT_MISMATCH`
+- 題組 `chapterId = null` → 允許（章節可為空）
+- 軟刪除後可重建同名科目（部分唯一索引生效）
+- 刪除章節 → 題組退回直接隸屬科目，內容不消失
+- 刪除科目／題組 → 連帶軟刪除，歷史資料保留
+- 中文內容於 API ↔ PostgreSQL 之間往返正確
+- 未登入 → 401；缺 CSRF 標頭 → 403；再次初始化 → 410
+
+### Phase 1b 工作項目
 
 1. **資料庫**：`users`、`refresh_tokens`、`app_settings`、`subjects`、`chapters`、`question_groups`、`questions`、`question_options`、`question_versions`、`question_sources`、`import_batches`、`import_questions`、`import_validation_issues`
    - 含複合外鍵 `question_groups(subject_id, chapter_id) → chapters(subject_id, id)`

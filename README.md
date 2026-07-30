@@ -8,8 +8,8 @@
 - AI 三階段深度解析（含網路查證與來源引用）
 - 多題整合的弱點診斷
 
-> **目前狀態：Phase 0（架構與契約）已完成。**
-> 設計文件位於 [`docs/`](./docs/)，功能實作依 [實作計畫](./docs/IMPLEMENTATION_PLAN.md) 分 Phase 1～5 進行。
+> **目前狀態：Phase 1a 已完成**——可建立帳號、登入，並管理科目／章節／題組。
+> 題目 CRUD 與 JSON 匯入屬 Phase 1b。詳見 [實作計畫](./docs/IMPLEMENTATION_PLAN.md)。
 
 ---
 
@@ -65,10 +65,15 @@ pnpm dev
 
 ### 首次使用
 
-系統第一次啟動時沒有任何帳號。開啟前端後會導向 `/setup` 建立你的帳號。
-**建立完成後該頁面永久停用**，不需要也不應該把帳號密碼寫進 `.env`。
+首次啟動前需先建立資料表：
 
-> 註：`/setup` 於 Phase 1 實作。Phase 0 的首頁是系統連線狀態頁。
+```bash
+pnpm --filter @repo/db db:migrate
+```
+
+系統第一次啟動時沒有任何帳號。開啟 <http://localhost:3000> 會自動導向 `/setup` 建立你的帳號
+（密碼至少 12 字元，且不得與帳號相同）。
+**建立完成後該頁面永久停用**，不需要也不應該把帳號密碼寫進 `.env`。
 
 ---
 
@@ -89,8 +94,12 @@ pnpm redis:logs          # 看日誌
 pnpm verify              # typecheck + lint + test + build（每個 Phase 完成必跑）
 pnpm typecheck
 pnpm lint
-pnpm test
+pnpm test                # 單元測試
 pnpm build
+
+# API 端到端驗證（需先啟動後端；預設打 :4000，可用 BASE 覆寫）
+pnpm test:api-e2e
+BASE=http://localhost:4101/api/v1 pnpm test:api-e2e
 
 # 環境變數
 pnpm bootstrap:env       # 補齊缺少的變數（可重複執行，不會覆寫既有值）

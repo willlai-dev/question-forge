@@ -1,8 +1,11 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 
+import { Public } from '../../common/decorators';
 import { HealthService, type DependenciesReport } from './health.service';
 
+// 健康檢查不需要登入：監控端點在使用者尚未初始化帳號時也必須可用。
+@Public()
 @ApiTags('health')
 @Controller('health')
 export class HealthController {

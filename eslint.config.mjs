@@ -55,9 +55,10 @@ export default tseslint.config(
   },
 
   {
-    // 腳本為 Node ESM，使用 JS 而非 TS。
-    files: ['scripts/**/*.mjs'],
+    // 維運腳本與 API 端到端測試皆為 Node ESM（使用 JS 而非 TS）。
+    files: ['scripts/**/*.mjs', 'tests/**/*.mjs'],
     languageOptions: {
+      sourceType: 'module',
       globals: { ...globals.node },
     },
   },

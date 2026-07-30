@@ -5,6 +5,8 @@ import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { EnvValidationError } from '@repo/contracts';
+import cookieParser from 'cookie-parser';
+import { cleanupOpenApiDoc } from 'nestjs-zod';
 
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
@@ -25,6 +27,8 @@ async function bootstrap(): Promise<void> {
   app.setGlobalPrefix(env.API_GLOBAL_PREFIX);
   app.enableShutdownHooks();
   app.useGlobalFilters(new AllExceptionsFilter());
+  // 認證與 CSRF 都依賴 Cookie，必須在守衛之前解析。
+  app.use(cookieParser(env.COOKIE_SECRET));
 
   // 上傳大小上限同時保護一般 JSON 請求與題庫匯入。
   app.useBodyParser('json', { limit: env.IMPORT_MAX_FILE_SIZE_BYTES });
@@ -48,7 +52,8 @@ async function bootstrap(): Promise<void> {
     .addCookieAuth('access_token')
     .build();
 
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
+  // cleanupOpenApiDoc 會把 createZodDto 產生的 schema 正規化成合法的 OpenAPI 文件。
+  const document = cleanupOpenApiDoc(SwaggerModule.createDocument(app, swaggerConfig));
   SwaggerModule.setup('docs', app, document, {
     swaggerOptions: { withCredentials: true },
   });

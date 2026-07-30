@@ -50,8 +50,8 @@
 
 | 模組 | 職責 | 階段 |
 |---|---|---|
-| `AuthModule` | 首次初始化、登入、token 輪替、CSRF | P1 |
-| `SubjectsModule` / `ChaptersModule` / `QuestionGroupsModule` | 題庫階層 CRUD 與排序 | P1 |
+| `AuthModule` ✅ | 首次初始化、登入、token 輪替、CSRF | P1a |
+| `QuestionBankModule` ✅ | 題庫階層（科目／章節／題組）CRUD 與排序 | P1a |
 | `QuestionsModule` | 題目 CRUD、搜尋、批次操作、版本快照 | P1 |
 | `ImportsModule` | 上傳、驗證、暫存、預覽、修正、commit | P1 |
 | `QuizModule` | 場次建立、出題、**判分**、交卷、結果 | P2 |
@@ -342,6 +342,28 @@ POST /ai/questions/:id/analyze
 > 相關但次要的問題：`tsc --noEmit`（typecheck）同樣會寫入 tsbuildinfo，
 > 也會影響後續 build。關閉 incremental 一併解決兩者，因此不需要為 typecheck
 > 另外指定 `--tsBuildInfoFile`。
+
+### Drizzle 在 sql\`\` 樣板中的欄位算繪陷阱（已踩過）
+
+以下寫法看起來完全正確，實測卻會**靜默回傳錯誤結果**：
+
+```ts
+chapterCount: sql<number>`(select count(*)::int from ${schema.chapters} c
+                           where c.subject_id = ${schema.subjects.id} and c.deleted_at is null)`
+```
+
+Drizzle 把 `${schema.subjects.id}` 算繪成「未限定資料表的」`"id"`，產生：
+
+```sql
+select "id", (select count(*)::int from "chapters" c where c.subject_id = "id" ...) from "subjects"
+```
+
+子查詢中的 `"id"` 被 PostgreSQL 解析成 `chapters.id`，條件變成 `c.subject_id = c.id`——
+語法合法、不會報錯、不會警告，但結果**恆為 0**。
+
+處理：所有計數改用分組聚合後在應用層合併（`apps/api/src/modules/question-bank/counts.ts`），
+完全不使用相關子查詢。這類「不報錯但答案錯」的問題，只有靠斷言實際數值的測試才抓得到，
+因此端到端測試會明確檢查 `chapterCount`／`questionGroupCount` 的數值而非只檢查 HTTP 狀態。
 
 ### 本機沒有 psql
 
