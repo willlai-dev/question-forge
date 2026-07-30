@@ -324,6 +324,19 @@ POST /ai/questions/:id/analyze
 
 處理：`docker-compose.yml` 明確指定 `name: qba`。同時全面避免 bind mount（改用 named volume），腳本路徑一律加引號。
 
+### TypeScript incremental 快取的陷阱（已處理）
+
+`tsc --noEmit`（typecheck）與 `tsc`（build）若共用同一個 `tsconfig.tsbuildinfo`，
+會出現這個難以察覺的錯誤：
+
+1. `pnpm verify` 先跑 typecheck，`--noEmit` 仍會寫入 tsbuildinfo，記錄「已是最新」。
+2. 接著跑 build，`nest build` 的 `deleteOutDir: true` 先刪掉 `dist`。
+3. tsc 讀 tsbuildinfo 認為無需重編，**什麼都不輸出**。
+4. 結果：`pnpm verify` 顯示成功，但 `dist` 是空的，`pnpm start` 直接失敗。
+
+處理：所有 `typecheck` 腳本都加上 `--tsBuildInfoFile node_modules/.cache/typecheck.tsbuildinfo`，
+讓檢查與建置使用各自獨立的快取。
+
 ### 本機沒有 psql
 
 所有資料庫操作都走 Node：Drizzle Kit 產生與套用 migration，`scripts/create-test-db.mjs` 以 node-postgres 建立測試資料庫。不依賴任何外部 CLI。
