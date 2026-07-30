@@ -1,0 +1,12 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# pnpm 10 預設封鎖套件的 build script，需明確允許。
+# 這些是本專案實際需要編譯 / 下載二進位的套件。
+onlyBuiltDependencies:
+  - '@swc/core'
+  - esbuild
+  - '@node-rs/argon2'
+  - sharp
+  - unrs-resolver

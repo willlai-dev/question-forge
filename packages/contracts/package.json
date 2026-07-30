@@ -1,0 +1,21 @@
+{
+  "name": "@repo/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "前後端共用的 Zod 契約：環境變數、統一錯誤格式、API DTO、匯入格式、AI 輸入輸出",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

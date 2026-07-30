@@ -1,0 +1,43 @@
+# 本專案只用 Docker 啟動 Redis。
+#
+# PostgreSQL 刻意「不」在此重建 —— 依 prompt.md 環境變數章第 7 點，
+# 直接使用使用者提供的 DATABASE_URL 所指向的本機 PostgreSQL。
+#
+# 注意：本專案路徑含非 ASCII 字元（階段資料/個人資料/專案/題庫分析），
+# 因此一律使用 named volume，不使用 bind mount，避免 Windows 掛載路徑問題。
+
+# 必須明確指定 project name：Compose 預設用目錄名稱推導，
+# 而本專案目錄名為「題庫分析」，全部字元都會被正規化流程移除而變成空字串，
+# 造成 "project name must not be empty" 錯誤。
+name: qba
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: qba-redis
+    restart: unless-stopped
+    # 只綁定在 loopback，不對區域網路暴露。
+    ports:
+      - '127.0.0.1:${REDIS_PORT:-6379}:6379'
+    environment:
+      # 密碼由 scripts/bootstrap-env.mjs 產生並寫入 .env，Compose 會自動讀取。
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD 未設定，請先執行 pnpm bootstrap:env}
+    command: >
+      redis-server
+      --requirepass "${REDIS_PASSWORD}"
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy noeviction
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli --no-auth-warning -a "$$REDIS_PASSWORD" ping | grep -q PONG']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  redis-data:
+    name: qba-redis-data

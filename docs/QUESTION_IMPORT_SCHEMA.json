@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://question-bank-analysis.local/schemas/question-import/1.0.0",
+  "title": "題庫匯入格式 v1.0.0",
+  "description": "由外部 LLM 從 PDF 整理後產生、供本系統匯入的選擇題題庫格式。第一版只支援單選題與複選題。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "subject", "questionGroup", "questions"],
+
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "description": "格式版本。目前系統只接受 1.0.0。",
+      "enum": ["1.0.0"]
+    },
+
+    "subject": {
+      "type": "object",
+      "description": "科目。匯入時若同名科目已存在則沿用，否則建立。",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "code": { "type": ["string", "null"], "maxLength": 50 },
+        "description": { "type": ["string", "null"], "maxLength": 1000 }
+      }
+    },
+
+    "chapter": {
+      "type": ["object", "null"],
+      "description": "章節。可為 null —— 允許題組直接隸屬科目。",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "description": { "type": ["string", "null"], "maxLength": 1000 },
+        "sortOrder": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+
+    "questionGroup": {
+      "type": "object",
+      "description": "題組。",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "description": { "type": ["string", "null"], "maxLength": 2000 },
+        "source": {
+          "type": ["string", "null"],
+          "maxLength": 200,
+          "description": "來源，例如「112年地方特考三等」。"
+        },
+        "year": { "type": ["integer", "null"], "minimum": 1900, "maximum": 2200 },
+        "notes": { "type": ["string", "null"], "maxLength": 2000 }
+      }
+    },
+
+    "sourceDocument": {
+      "type": ["object", "null"],
+      "description": "選填。原始 PDF 的描述資訊，便於日後追溯。",
+      "additionalProperties": false,
+      "properties": {
+        "filename": { "type": ["string", "null"], "maxLength": 300 },
+        "title": { "type": ["string", "null"], "maxLength": 300 },
+        "totalPages": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
+
+    "questions": {
+      "type": "array",
+      "description": "題目陣列。不得包含 PDF 中不存在的題目。",
+      "minItems": 1,
+      "maxItems": 2000,
+      "items": { "$ref": "#/$defs/question" }
+    }
+  },
+
+  "$defs": {
+    "option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "text"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "選項代號，統一使用大寫英文字母 A、B、C、D…",
+          "pattern": "^[A-Z]$"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "選項完整文字，不得省略或改寫。"
+        }
+      }
+    },
+
+    "question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "externalId",
+        "questionNumber",
+        "type",
+        "stem",
+        "options",
+        "correctAnswers",
+        "explanation",
+        "sourcePage",
+        "sourceReference",
+        "reviewRequired",
+        "reviewReason"
+      ],
+      "properties": {
+        "externalId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "此題在來源文件中的唯一識別，例如 \"112-admin-law-Q12\"。同一檔案內不得重複。"
+        },
+        "questionNumber": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "PDF 上的原始題號，必須保留。"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["single_choice", "multiple_choice"],
+          "description": "只允許這兩種題型。其他題型請整個略過，不要轉換。"
+        },
+        "stem": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000,
+          "description": "完整題幹。跨頁的題目必須合併為一則，不得截斷。"
+        },
+        "options": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 10,
+          "items": { "$ref": "#/$defs/option" },
+          "description": "至少兩個選項，key 不得重複。"
+        },
+        "correctAnswers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Z]$" },
+          "description": "正確答案的選項 key。每個值都必須出現在 options 之中。"
+        },
+        "explanation": {
+          "type": ["string", "null"],
+          "maxLength": 8000,
+          "description": "PDF 原有的解析。**PDF 沒有解析時必須為 null，絕對不可自行編造。**"
+        },
+        "sourcePage": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "此題在 PDF 中的頁碼。跨頁時填題目起始頁。"
+        },
+        "sourceReference": {
+          "type": ["string", "null"],
+          "maxLength": 300,
+          "description": "章節標題或其他來源標示，例如「第三章 行政行為」。"
+        },
+        "reviewRequired": {
+          "type": "boolean",
+          "description": "無法確定答案、題目模糊、或 OCR 疑似有誤時設為 true。"
+        },
+        "reviewReason": {
+          "type": ["string", "null"],
+          "maxLength": 1000,
+          "description": "reviewRequired 為 true 時必須說明原因；否則為 null。"
+        },
+        "knowledgeHints": {
+          "type": ["array", "null"],
+          "maxItems": 3,
+          "items": { "type": "string", "maxLength": 100 },
+          "description": "選填。此題可能考查的知識點提示。僅作為人工建立標籤時的參考，系統不會直接採用為正式標籤。"
+        }
+      },
+
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "single_choice" } }, "required": ["type"] },
+          "then": {
+            "properties": { "correctAnswers": { "minItems": 1, "maxItems": 1 } },
+            "description": "單選題必須恰好一個正確答案。"
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "multiple_choice" } }, "required": ["type"] },
+          "then": {
+            "properties": { "correctAnswers": { "minItems": 2 } },
+            "description": "複選題必須至少兩個正確答案。"
+          }
+        },
+        {
+          "if": { "properties": { "reviewRequired": { "const": true } }, "required": ["reviewRequired"] },
+          "then": {
+            "properties": { "reviewReason": { "type": "string", "minLength": 1 } },
+            "description": "標記需複核時必須說明原因。"
+          }
+        }
+      ]
+    }
+  },
+
+  "examples": [
+    {
+      "schemaVersion": "1.0.0",
+      "subject": { "name": "行政法", "code": "ADMIN-LAW", "description": null },
+      "chapter": { "name": "第三章 行政行為", "description": null, "sortOrder": 3 },
+      "questionGroup": {
+        "name": "112年地方特考三等 行政法",
+        "description": null,
+        "source": "112年地方特考",
+        "year": 2023,
+        "notes": null
+      },
+      "sourceDocument": { "filename": "112地特三等行政法.pdf", "title": null, "totalPages": 18 },
+      "questions": [
+        {
+          "externalId": "112-local3-admin-Q12",
+          "questionNumber": 12,
+          "type": "single_choice",
+          "stem": "下列何者屬於行政處分？",
+          "options": [
+            { "key": "A", "text": "主管機關發布之行政指導" },
+            { "key": "B", "text": "主管機關命拆除違章建築之命令" },
+            { "key": "C", "text": "主管機關擬定之行政計畫" },
+            { "key": "D", "text": "主管機關與人民締結之行政契約" }
+          ],
+          "correctAnswers": ["B"],
+          "explanation": null,
+          "sourcePage": 5,
+          "sourceReference": "第三章 行政行為",
+          "reviewRequired": false,
+          "reviewReason": null,
+          "knowledgeHints": ["行政處分之定義"]
+        },
+        {
+          "externalId": "112-local3-admin-Q13",
+          "questionNumber": 13,
+          "type": "multiple_choice",
+          "stem": "關於行政處分之附款，下列敘述何者正確？（複選）",
+          "options": [
+            { "key": "A", "text": "期限屬於附款之一種" },
+            { "key": "B", "text": "負擔得單獨為行政爭訟之標的" },
+            { "key": "C", "text": "附款不得違反行政處分之目的" },
+            { "key": "D", "text": "羈束處分得任意附加附款" }
+          ],
+          "correctAnswers": ["A", "B", "C"],
+          "explanation": "羈束處分原則上不得附加附款，除非法律有明文規定。",
+          "sourcePage": 6,
+          "sourceReference": "第三章 行政行為",
+          "reviewRequired": true,
+          "reviewReason": "PDF 答案欄位模糊，D 選項是否為答案無法確認。",
+          "knowledgeHints": ["行政處分之附款"]
+        }
+      ]
+    }
+  ]
+}

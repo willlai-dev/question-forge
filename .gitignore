@@ -1,0 +1,48 @@
+# ---- 機密設定：絕不可進版控 ----
+.env
+.env.*
+!.env.example
+apps/web/.env.local
+apps/web/.env*.local
+
+# ---- 相依套件 ----
+node_modules/
+.pnpm-store/
+
+# ---- 建置產物 ----
+dist/
+build/
+out/
+.next/
+*.tsbuildinfo
+
+# ---- 測試與覆蓋率 ----
+coverage/
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# ---- 快取 ----
+.turbo/
+.cache/
+.eslintcache
+.vitest/
+
+# ---- 編輯器 / 作業系統 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# ---- 日誌 ----
+*.log
+npm-debug.log*
+pnpm-debug.log*
+logs/
+
+# ---- 本機暫存 ----
+tmp/
+temp/
