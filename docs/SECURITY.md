@@ -71,6 +71,19 @@ Cookie 屬性：`HttpOnly`、`SameSite=Lax`、`Path=/`、開發環境 `Secure=fa
 
 **Refresh token 輪替**：每次 refresh 發新 token、舊 token 立刻標記 `revoked_at` 並記錄 `replaced_by_id`。若偵測到已撤銷的 token 被重複使用 —— 這是竊取的訊號 —— 撤銷該使用者的整條 token 鏈。
 
+**自動續期**：前端的 `apiFetch` 遇到 401 時會自動呼叫一次 `POST /auth/refresh` 再重送原請求，
+使用者不會因為 access token 只有 15 分鐘而在作答中途被登出。
+
+> **續期必須去重**。輪替加上重放偵測意味著：若多個並行請求各自拿同一個舊 token 去換新的，
+> 第二個之後都會被判定為重放，後端會撤銷該使用者的**所有**工作階段 ——
+> 使用者會莫名其妙被登出。因此 `api-client.ts` 以單一個 in-flight Promise 讓並行請求共用同一次續期。
+>
+> 這條路徑有測試鎖住：單元測試驗證「三個請求同時遇到 401 只會續期一次」，
+> 端到端測試驗證輪替、重放偵測與撤銷後仍可用密碼重新登入。
+
+因為有自動續期，**不需要**為了避免被登出而把 `JWT_ACCESS_TTL` 調長 ——
+調長只會擴大 token 外洩後的可用時間窗。
+
 ### 2.4 CSRF
 
 前後端同為 `localhost` 不同埠，屬 same-site，Cookie 會隨跨埠請求送出，因此 CSRF 防護不可省略。

@@ -67,19 +67,66 @@ export function resetCsrfToken(): void {
   csrfToken = null;
 }
 
+/**
+ * Access token 過期時的自動續期。
+ *
+ * 背景：access token 只有 15 分鐘，refresh token 有 30 天。作答一份 20 題的考卷
+ * 很容易超過 15 分鐘，若不續期，使用者會在作答到一半時被踢回登入頁。
+ *
+ * **必須去重**：後端的 refresh 採 token 輪替並且會偵測重放 ——
+ * 若多個並行請求各自拿「同一個舊 token」去換新的，第二個之後都會被判定為重放攻擊，
+ * 後端會撤銷該使用者的**所有**工作階段。因此同一時間只能有一次續期在飛。
+ */
+let refreshInFlight: Promise<boolean> | null = null;
+
+/** 這些端點的 401 是真的沒登入，不該再去續期（尤其 /auth/refresh 自己）。 */
+const NO_REFRESH_PATHS = ['/auth/refresh', '/auth/login', '/auth/logout', '/auth/bootstrap'];
+
+async function refreshSession(): Promise<boolean> {
+  refreshInFlight ??= (async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-CSRF-Token': await getCsrfToken() },
+      });
+      return response.ok;
+    } catch {
+      // 網路層失敗不該被誤判成「登入已失效」，交由原本的錯誤往上拋。
+      return false;
+    }
+  })().finally(() => {
+    refreshInFlight = null;
+  });
+
+  return refreshInFlight;
+}
+
 export interface ApiFetchOptions extends Omit<RequestInit, 'body' | 'method'> {
   method?: string;
   body?: unknown;
 }
 
+/**
+ * 已經用掉的自我修復手段。
+ *
+ * 兩種恢復各只允許一次，因此一個請求最多重送兩次；
+ * 用旗標而不是單一個 boolean，是為了讓「CSRF 過期」與「登入過期」同時發生時
+ * 兩者都能各自恢復，同時仍然有明確的上限，不會無限重試。
+ */
+interface RecoveryState {
+  csrf: boolean;
+  auth: boolean;
+}
+
 export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {
-  return sendRequest<T>(path, options, false);
+  return sendRequest<T>(path, options, { csrf: false, auth: false });
 }
 
 async function sendRequest<T>(
   path: string,
   options: ApiFetchOptions,
-  isRetry: boolean,
+  recovered: RecoveryState,
 ): Promise<T> {
   const { body, headers, method = 'GET', ...rest } = options;
 
@@ -110,13 +157,20 @@ async function sendRequest<T>(
 
     // CSRF token 過期是可自行修復的狀況（例如 cookie 被另一次取得覆寫），
     // 重新取得後重試一次即可，不需要讓使用者看到錯誤或手動重新整理。
-    // 只重試一次，避免在真正的設定錯誤下無限迴圈。
-    if (error?.code === 'CSRF_TOKEN_INVALID' && !isRetry) {
+    if (error?.code === 'CSRF_TOKEN_INVALID' && !recovered.csrf) {
       resetCsrfToken();
-      return sendRequest<T>(path, options, true);
+      return sendRequest<T>(path, options, { ...recovered, csrf: true });
     }
 
     if (error?.code === 'CSRF_TOKEN_INVALID') resetCsrfToken();
+
+    // Access token 過期同樣可以自行修復：用 refresh token 換一組新的再重送。
+    // 續期失敗才把原本的 401 拋出去，由 AppShell 導向登入頁。
+    if (response.status === 401 && !recovered.auth && !NO_REFRESH_PATHS.includes(path)) {
+      if (await refreshSession()) {
+        return sendRequest<T>(path, options, { ...recovered, auth: true });
+      }
+    }
 
     throw new ApiRequestError(
       response.status,

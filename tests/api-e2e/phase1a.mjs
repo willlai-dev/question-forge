@@ -12,15 +12,19 @@ function cookieHeader() {
   return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join('; ');
 }
 
+/** 吸收 Set-Cookie，並回傳這次被重新下發的 cookie 名稱（供續期測試斷言）。 */
 function absorb(res) {
+  const names = [];
   for (const raw of res.headers.getSetCookie?.() ?? []) {
     const [pair] = raw.split(';');
     const idx = pair.indexOf('=');
     const name = pair.slice(0, idx).trim();
     const value = pair.slice(idx + 1).trim();
+    names.push(name);
     if (value === '' ) jar.delete(name);
     else jar.set(name, value);
   }
+  return names;
 }
 
 async function call(method, path, body, extraHeaders = {}) {
@@ -31,11 +35,11 @@ async function call(method, path, body, extraHeaders = {}) {
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  absorb(res);
+  const set = absorb(res);
   const text = await res.text();
   let json;
   try { json = text ? JSON.parse(text) : undefined; } catch { json = text; }
-  return { status: res.status, body: json };
+  return { status: res.status, body: json, set };
 }
 
 function check(label, condition, detail = '') {
@@ -153,6 +157,47 @@ const run = async () => {
   const anon = await call('GET', '/subjects');
   check('未登入存取 → 401 UNAUTHORIZED', anon.status === 401 && anon.body.error.code === 'UNAUTHORIZED');
   for (const [k, v] of saved) jar.set(k, v);
+
+  // 這段原本沒有覆蓋。前端在 access token 過期時會自動呼叫此端點續期
+  // （否則作答超過 15 分鐘就會被踢回登入頁），因此它已是關鍵路徑，必須測。
+  console.log('\n=== Token 續期與重放偵測 ===');
+  const decodeJwt = (jwt) => JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString());
+  const oldRefresh = jar.get('refresh_token');
+  const oldAccess = jar.get('access_token');
+  check('登入後同時取得 access 與 refresh cookie', Boolean(oldRefresh && oldAccess));
+
+  const renewed = await call('POST', '/auth/refresh', undefined, H());
+  check('POST /auth/refresh → 200', renewed.status === 200, `status=${renewed.status}`);
+  check('續期後重新下發兩個 cookie',
+    renewed.set.includes('access_token') && renewed.set.includes('refresh_token'),
+    renewed.set.join(','));
+  check('refresh token 已輪替', jar.get('refresh_token') !== oldRefresh);
+  check('續期後的 access token 仍屬同一使用者',
+    decodeJwt(jar.get('access_token')).sub === decodeJwt(oldAccess).sub);
+
+  const stillWorks = await call('GET', '/auth/me');
+  check('續期後可繼續存取受保護資源', stillWorks.status === 200);
+
+  // 重放：拿已輪替掉的舊 token 再換一次
+  const currentRefresh = jar.get('refresh_token');
+  jar.set('refresh_token', oldRefresh);
+  const replay = await call('POST', '/auth/refresh', undefined, H());
+  check('舊 refresh token 重放 → 401 REFRESH_TOKEN_INVALID',
+    replay.status === 401 && replay.body?.error?.code === 'REFRESH_TOKEN_INVALID',
+    `status=${replay.status} code=${replay.body?.error?.code}`);
+
+  // 偵測到重放後，該使用者的所有工作階段都應被撤銷 —— 連原本合法的新 token 也不能再用
+  jar.set('refresh_token', currentRefresh);
+  const afterReplay = await call('POST', '/auth/refresh', undefined, H());
+  check('偵測到重放後，連合法的新 token 也一併失效',
+    afterReplay.status === 401, `status=${afterReplay.status}`);
+
+  // 後續測試需要有效登入狀態
+  await refreshCsrf();
+  const relogin = await call('POST', '/auth/login',
+    { username: 'probe', password: 'probe-password-123' }, H());
+  check('重放撤銷後仍可用密碼重新登入', relogin.status === 200 || relogin.status === 201,
+    `status=${relogin.status}`);
 
   console.log('\n=== 登出 ===');
   await refreshCsrf();
