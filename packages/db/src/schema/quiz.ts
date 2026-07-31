@@ -8,6 +8,7 @@ import {
   numeric,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -18,6 +19,7 @@ import {
 import { createdAt, timestamps } from './_shared';
 import { users } from './identity';
 import { questions } from './question-bank';
+import { errorTypes } from './tags';
 
 /**
  * 作答與錯題（docs/ERD.md §6）。
@@ -196,8 +198,6 @@ export const userAnswers = pgTable(
  * 錯題紀錄。
  *
  * 一題一列，答對不刪除（FR-MIS-05）。
- * `last_error_type_id` 與 `mistake_record_error_types` 需要 error_types 表才能建立外鍵，
- * 屬 Phase 3；在此之前不建立無外鍵的孤兒欄位。
  */
 export const mistakeRecords = pgTable(
   'mistake_records',
@@ -217,6 +217,10 @@ export const mistakeRecords = pgTable(
     firstMissedAt: timestamp('first_missed_at', { withTimezone: true }),
     lastMissedAt: timestamp('last_missed_at', { withTimezone: true }),
     lastAnsweredAt: timestamp('last_answered_at', { withTimezone: true }),
+    /** 最近一次判定的錯誤類型。完整清單在 mistake_record_error_types。 */
+    lastErrorTypeId: uuid('last_error_type_id').references(() => errorTypes.id, {
+      onDelete: 'set null',
+    }),
     /** 是否曾經重新答對過；一旦為 true 就不再變回 false。 */
     isResolved: boolean('is_resolved').notNull().default(false),
     ...timestamps,
@@ -239,5 +243,32 @@ export const mistakeRecords = pgTable(
     uniqueIndex('mistake_records_user_question_unique').on(t.userId, t.questionId),
     index('mistake_records_user_state_idx').on(t.userId, t.masteryState),
     index('mistake_records_user_last_missed_idx').on(t.userId, t.lastMissedAt.desc()),
+  ],
+);
+
+/**
+ * 錯題 ↔ 錯誤類型（FR-MIS-02）。
+ *
+ * 本表原列於 Phase 2，但需要外鍵指向 Phase 3 的 error_types，因此隨該表一起建立。
+ * 放在本檔而非 tags.ts，是為了讓 schema 檔的相依方向固定為 quiz.ts → tags.ts，避免循環 import。
+ */
+export const mistakeRecordErrorTypes = pgTable(
+  'mistake_record_error_types',
+  {
+    mistakeRecordId: uuid('mistake_record_id')
+      .notNull()
+      .references(() => mistakeRecords.id, { onDelete: 'cascade' }),
+    errorTypeId: uuid('error_type_id')
+      .notNull()
+      .references(() => errorTypes.id, { onDelete: 'restrict' }),
+    occurrenceCount: integer('occurrence_count').notNull().default(1),
+    /** manual：使用者自行標記；ai：Phase 4 的分析結果。 */
+    source: text('source').notNull().default('manual'),
+    ...timestamps,
+  },
+  (t) => [
+    primaryKey({ columns: [t.mistakeRecordId, t.errorTypeId] }),
+    check('mistake_record_error_types_source_check', sql`${t.source} in ('manual', 'ai')`),
+    index('mistake_record_error_types_error_idx').on(t.errorTypeId),
   ],
 );

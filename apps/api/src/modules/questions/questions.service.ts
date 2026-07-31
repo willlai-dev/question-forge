@@ -15,12 +15,16 @@ import { and, asc, desc, eq, ilike, inArray, isNotNull, isNull, sql, type SQL } 
 
 import { AppException } from '../../common/app.exception';
 import { DATABASE } from '../../infra/infra.module';
+import { QuestionTagsService } from '../tags/question-tags.service';
 
 type QuestionRow = typeof schema.questions.$inferSelect;
 
 @Injectable()
 export class QuestionsService {
-  constructor(@Inject(DATABASE) private readonly database: DatabaseHandle) {}
+  constructor(
+    @Inject(DATABASE) private readonly database: DatabaseHandle,
+    private readonly questionTags: QuestionTagsService,
+  ) {}
 
   async list(
     userId: string,
@@ -44,6 +48,22 @@ export class QuestionsService {
     if (query.hasExplanation === 'true') conditions.push(isNotNull(schema.questions.explanation));
     if (query.hasExplanation === 'false') conditions.push(isNull(schema.questions.explanation));
     if (query.q) conditions.push(ilike(schema.questions.stem, `%${query.q}%`));
+
+    // 相關子查詢一律寫死資料表名稱來限定欄位，不用 ${schema.x.y} 內插。
+    // 原因見 docs/ARCHITECTURE.md：drizzle 會把 ${schema.questions.id} 算繪成未限定的 "id"，
+    // 在子查詢中會先被解析成子查詢自己那張表的欄位 —— 語法合法、不報錯，結果卻是錯的。
+    if (query.knowledgeTagId === 'none') {
+      conditions.push(
+        sql`not exists (select 1 from question_knowledge_tags qkt
+             where qkt.question_id = questions.id)`,
+      );
+    } else if (query.knowledgeTagId) {
+      conditions.push(
+        sql`exists (select 1 from question_knowledge_tags qkt
+             where qkt.question_id = questions.id
+               and qkt.knowledge_tag_id = ${query.knowledgeTagId})`,
+      );
+    }
 
     const where = and(...conditions);
 
@@ -325,6 +345,8 @@ export class QuestionsService {
       optionMap.set(option.questionId, list);
     }
 
+    const tagMap = await this.questionTags.loadForQuestions(db, ids);
+
     return rows.map((row) => {
       const group = groupMap.get(row.questionGroupId);
       return {
@@ -354,6 +376,8 @@ export class QuestionsService {
         status: row.status as QuestionResponse['status'],
         currentVersion: row.currentVersion,
         contentHash: row.contentHash,
+        knowledgeTags: tagMap.get(row.id)?.knowledgeTags ?? [],
+        skillTags: tagMap.get(row.id)?.skillTags ?? [],
         createdAt: row.createdAt.toISOString(),
         updatedAt: row.updatedAt.toISOString(),
       };

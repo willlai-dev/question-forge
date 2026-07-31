@@ -1,12 +1,13 @@
 'use client';
 
-import type { MistakeDetailResponse } from '@repo/contracts';
-import { useQuery } from '@tanstack/react-query';
+import type { ErrorTypeResponse, MistakeDetailResponse } from '@repo/contracts';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import { useEffect, useState } from 'react';
 
 import { AppShell } from '@/components/app-shell';
-import { Card, ErrorBanner } from '@/components/ui';
+import { Button, Card, ErrorBanner } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
 import { MASTERY_LABEL } from '@/lib/labels';
 import { cn } from '@/lib/utils';
@@ -21,11 +22,31 @@ export default function MistakeDetailPage() {
 
 function MistakeDetailView() {
   const params = useParams<{ questionId: string }>();
+  const qc = useQueryClient();
+  const [selectedErrorTypes, setSelectedErrorTypes] = useState<string[]>([]);
 
   const detail = useQuery({
     queryKey: ['mistakes', params.questionId],
     queryFn: () => api.get<MistakeDetailResponse>(`/mistakes/${params.questionId}`),
     retry: false,
+  });
+
+  const errorTypes = useQuery({
+    queryKey: ['error-types'],
+    queryFn: () => api.get<ErrorTypeResponse[]>('/error-types'),
+  });
+
+  useEffect(() => {
+    if (!detail.data) return;
+    setSelectedErrorTypes(
+      detail.data.errorTypes.filter((t) => t.source === 'manual').map((t) => t.errorTypeId),
+    );
+  }, [detail.data]);
+
+  const saveErrorTypes = useMutation({
+    mutationFn: () =>
+      api.put(`/mistakes/${params.questionId}/error-types`, { errorTypeIds: selectedErrorTypes }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['mistakes'] }),
   });
 
   if (detail.error instanceof ApiRequestError) {
@@ -97,6 +118,67 @@ function MistakeDetailView() {
             這一題沒有解析。系統不會自動編造 —— AI 解析功能在 Phase 4 提供。
           </p>
         )}
+
+        {data.knowledgeTags.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-muted-foreground">知識點：</span>
+            {data.knowledgeTags.map((tag) => (
+              <span
+                key={tag.id}
+                className={cn(
+                  'rounded-full px-2.5 py-0.5',
+                  tag.role === 'primary' ? 'bg-secondary' : 'bg-muted text-muted-foreground',
+                )}
+              >
+                {tag.name}
+              </span>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card className="space-y-3">
+        <div>
+          <h2 className="font-medium">錯誤類型</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            標記錯的原因，之後可以在錯題本依此篩選。Phase 4 的 AI 分析也會寫入這裡。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {errorTypes.data?.map((type) => {
+            const active = selectedErrorTypes.includes(type.id);
+            return (
+              <button
+                key={type.id}
+                type="button"
+                title={type.description ?? undefined}
+                onClick={() =>
+                  setSelectedErrorTypes((prev) =>
+                    prev.includes(type.id)
+                      ? prev.filter((id) => id !== type.id)
+                      : [...prev, type.id],
+                  )
+                }
+                className={cn(
+                  'rounded-full border px-3 py-1 text-sm transition',
+                  active ? 'border-primary bg-accent font-medium' : 'hover:bg-accent/50',
+                )}
+              >
+                {type.name}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-3">
+          <Button onClick={() => saveErrorTypes.mutate()} disabled={saveErrorTypes.isPending}>
+            {saveErrorTypes.isPending ? '儲存中…' : '儲存錯誤類型'}
+          </Button>
+          {data.errorTypes.some((t) => t.source === 'ai') && (
+            <span className="text-xs text-muted-foreground">
+              AI 標記的項目會保留，不會被這裡的儲存覆蓋
+            </span>
+          )}
+        </div>
       </Card>
 
       <div className="space-y-3">

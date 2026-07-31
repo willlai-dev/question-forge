@@ -80,7 +80,7 @@ export class MistakesService {
     const { db } = this.database;
 
     const rows = await db
-      .select(this.selection())
+      .select({ ...this.selection(), mistakeRecordId: schema.mistakeRecords.id })
       .from(schema.mistakeRecords)
       .innerJoin(schema.questions, eq(schema.questions.id, schema.mistakeRecords.questionId))
       .innerJoin(
@@ -117,11 +117,45 @@ export class MistakesService {
       )
       .orderBy(desc(schema.userAnswers.answeredAt));
 
+    const knowledgeTags = await db
+      .select({
+        id: schema.knowledgeTags.id,
+        name: schema.knowledgeTags.name,
+        role: schema.questionKnowledgeTags.role,
+      })
+      .from(schema.questionKnowledgeTags)
+      .innerJoin(
+        schema.knowledgeTags,
+        eq(schema.knowledgeTags.id, schema.questionKnowledgeTags.knowledgeTagId),
+      )
+      .where(eq(schema.questionKnowledgeTags.questionId, questionId));
+
+    const errorTypes = await db
+      .select({
+        errorTypeId: schema.mistakeRecordErrorTypes.errorTypeId,
+        code: schema.errorTypes.code,
+        name: schema.errorTypes.name,
+        occurrenceCount: schema.mistakeRecordErrorTypes.occurrenceCount,
+        source: schema.mistakeRecordErrorTypes.source,
+      })
+      .from(schema.mistakeRecordErrorTypes)
+      .innerJoin(
+        schema.errorTypes,
+        eq(schema.errorTypes.id, schema.mistakeRecordErrorTypes.errorTypeId),
+      )
+      .where(eq(schema.mistakeRecordErrorTypes.mistakeRecordId, row.mistakeRecordId))
+      .orderBy(asc(schema.errorTypes.sortOrder));
+
     return {
       ...this.toResponse(row),
       options: options.map((o) => ({ key: o.key, text: o.text, isCorrect: o.isCorrect })),
       correctAnswers: options.filter((o) => o.isCorrect).map((o) => o.key),
       explanation: row.explanation,
+      knowledgeTags,
+      errorTypes: errorTypes.map((type) => ({
+        ...type,
+        source: type.source as 'manual' | 'ai',
+      })),
       attempts: attempts.map((attempt) => ({
         answerId: attempt.id,
         quizSessionId: attempt.sessionId,
@@ -181,8 +215,13 @@ export class MistakesService {
     userId: string,
     dto: CreateMistakePracticeRequest,
   ): Promise<QuizSessionResponse> {
-    const scopes: { scopeType: 'subject' | 'chapter' | 'question_group'; refId: string }[] = [];
-    if (dto.questionGroupId)
+    const scopes: {
+      scopeType: 'subject' | 'chapter' | 'question_group' | 'knowledge_tag';
+      refId: string;
+    }[] = [];
+    if (dto.knowledgeTagId)
+      scopes.push({ scopeType: 'knowledge_tag', refId: dto.knowledgeTagId });
+    else if (dto.questionGroupId)
       scopes.push({ scopeType: 'question_group', refId: dto.questionGroupId });
     else if (dto.chapterId && dto.chapterId !== 'none')
       scopes.push({ scopeType: 'chapter', refId: dto.chapterId });
@@ -218,6 +257,23 @@ export class MistakesService {
       conditions.push(eq(schema.mistakeRecords.masteryState, query.masteryState));
     if (query.isResolved)
       conditions.push(eq(schema.mistakeRecords.isResolved, query.isResolved === 'true'));
+
+    // 子查詢的欄位一律寫死資料表名稱限定，理由見 docs/ARCHITECTURE.md 的相關子查詢陷阱。
+    if (query.knowledgeTagId) {
+      conditions.push(
+        sql`exists (select 1 from question_knowledge_tags qkt
+             where qkt.question_id = mistake_records.question_id
+               and qkt.knowledge_tag_id = ${query.knowledgeTagId})`,
+      );
+    }
+    if (query.errorTypeId) {
+      conditions.push(
+        sql`exists (select 1 from mistake_record_error_types mret
+             where mret.mistake_record_id = mistake_records.id
+               and mret.error_type_id = ${query.errorTypeId})`,
+      );
+    }
+
     return conditions;
   }
 

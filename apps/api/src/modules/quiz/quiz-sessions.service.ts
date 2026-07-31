@@ -149,6 +149,9 @@ export class QuizSessionsService {
       question_group: dto.scopes
         .filter((s) => s.scopeType === 'question_group')
         .map((s) => s.refId),
+      knowledge_tag: dto.scopes
+        .filter((s) => s.scopeType === 'knowledge_tag')
+        .map((s) => s.refId),
     };
 
     if (byType.subject.length > 0) {
@@ -200,6 +203,21 @@ export class QuizSessionsService {
         throw new AppException(ERROR_CODES.QUESTION_GROUP_NOT_FOUND, '出題範圍中有不存在的題組。');
       }
     }
+
+    if (byType.knowledge_tag.length > 0) {
+      const rows = await db
+        .select({ id: schema.knowledgeTags.id })
+        .from(schema.knowledgeTags)
+        .where(
+          and(
+            eq(schema.knowledgeTags.userId, userId),
+            inArray(schema.knowledgeTags.id, byType.knowledge_tag),
+          ),
+        );
+      if (rows.length !== new Set(byType.knowledge_tag).size) {
+        throw new AppException(ERROR_CODES.TAG_NOT_FOUND, '出題範圍中有不存在的知識點。');
+      }
+    }
   }
 
   /**
@@ -229,12 +247,24 @@ export class QuizSessionsService {
     const groupIds = dto.scopes
       .filter((s) => s.scopeType === 'question_group')
       .map((s) => s.refId);
+    const knowledgeTagIds = dto.scopes
+      .filter((s) => s.scopeType === 'knowledge_tag')
+      .map((s) => s.refId);
 
     if (subjectIds.length > 0)
       scopeConditions.push(inArray(schema.questions.subjectId, subjectIds));
     if (chapterIds.length > 0) scopeConditions.push(inArray(schema.questions.chapterId, chapterIds));
     if (groupIds.length > 0)
       scopeConditions.push(inArray(schema.questions.questionGroupId, groupIds));
+    if (knowledgeTagIds.length > 0) {
+      // 只作答特定知識點（FR-QUIZ-06）。
+      // 子查詢的欄位一律寫死資料表名稱限定，理由見 docs/ARCHITECTURE.md 的相關子查詢陷阱。
+      scopeConditions.push(
+        sql`exists (select 1 from question_knowledge_tags qkt
+             where qkt.question_id = questions.id
+               and qkt.knowledge_tag_id in ${knowledgeTagIds})`,
+      );
+    }
     if (scopeConditions.length > 0) conditions.push(or(...scopeConditions)!);
 
     if (dto.onlyMistakes) {
@@ -918,6 +948,15 @@ export class QuizSessionsService {
     const subjectIds = idsOf('subject');
     const chapterIds = idsOf('chapter');
     const groupIds = idsOf('question_group');
+    const knowledgeTagIds = idsOf('knowledge_tag');
+
+    if (knowledgeTagIds.length > 0) {
+      const rows = await db
+        .select({ id: schema.knowledgeTags.id, name: schema.knowledgeTags.name })
+        .from(schema.knowledgeTags)
+        .where(inArray(schema.knowledgeTags.id, knowledgeTagIds));
+      for (const row of rows) names.set(row.id, row.name);
+    }
 
     if (subjectIds.length > 0) {
       const rows = await db

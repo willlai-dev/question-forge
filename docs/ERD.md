@@ -217,8 +217,19 @@ FOREIGN KEY (subject_id, chapter_id)
 規格 §8 的核心訴求：**標籤不得由 AI 自由生成**，避免同義詞失控。
 
 ### `knowledge_tags`（知識點）
-`id`、`user_id`、`subject_id NULL`（可限定科目範圍）、`name`、`slug`、`description`、`parent_id NULL`（可建階層）、`status`（`active`/`deprecated`/`merged`）、`merged_into_id FK NULL`、`usage_count`
-唯一：`(subject_id, slug) WHERE status <> 'merged'`
+`id`、`user_id`、`subject_id NULL`（可限定科目範圍）、`name`、`slug`、`description`、`parent_id NULL`（可建階層）、`status`（`active`/`deprecated`/`merged`）、`merged_into_id FK NULL`
+唯一：`(user_id, subject_id, slug) WHERE status <> 'merged' AND subject_id IS NOT NULL`
+以及 `(user_id, slug) WHERE status <> 'merged' AND subject_id IS NULL`
+
+> 分成兩個部分唯一索引，是因為 PostgreSQL 的唯一索引不會把兩個 NULL 視為相等 ——
+> 若只用 `(user_id, subject_id, slug)`，跨科目通用的標籤（`subject_id IS NULL`）就完全不受唯一性約束。
+
+`parent_id` 與 `merged_into_id` 都是自我參照外鍵（drizzle 需要 `AnyPgColumn` 標註才會產生約束）。
+`merged_into_id` 為 `ON DELETE restrict`：合併目標不可被直接刪除，否則已合併的標籤會指向不存在的列。
+另有 CHECK 保證「`status = 'merged'` ⇔ `merged_into_id IS NOT NULL`」。
+
+**`usage_count` 不存成欄位**，改為查詢時即時計算。合併、刪除、改標籤都會影響它，
+任何一條寫入路徑忘了維護就會靜默失準；與錯題紀錄採同一原則（可推導的數字不另存一份）。
 
 ### `skill_tags`（能力類型）
 `id`、`name`、`slug`、`description`、`sort_order`、`status`
@@ -245,10 +256,21 @@ PK：`(question_id, knowledge_tag_id)`
 
 `normalized_alias` = 去空白、轉小寫、全形轉半形後的字串。AI 回傳的標籤名稱先經此表正規化，對不上才視為新標籤建議。
 
+正規化的實作是 `@repo/contracts` 的 `normalizeTagName()`，順序固定為
+**NFKC（全形轉半形）→ 轉小寫 → 去掉所有空白**。NFKC 必須在轉小寫之前，否則「Ａ」不會先變成「A」。
+
+`canonical_tag_id` 沒有外鍵：它依 `tag_kind` 指向三張不同的表，無法用單一外鍵表達，
+由 service 在建立與合併時驗證。`tag_suggestions.resolved_tag_id` 同理。
+
 ### `tag_suggestions`
 `id`、`tag_kind`、`suggested_name`、`normalized_name`、`context_question_id`、`source`（`ai`/`user`）、`ai_job_id`、`rationale`、`occurrence_count`、`status`（`pending`/`approved`/`merged`/`rejected`）、`resolved_tag_id`、`reviewed_at`、`review_note`
 
 `occurrence_count` 讓重複出現的建議自然浮上來，優先審核。
+待審中的同名建議以部分唯一索引 `(user_id, tag_kind, normalized_name) WHERE status = 'pending'` 收斂成一列，
+重複提交只累加次數。另有 CHECK 保證「`status = 'pending'` ⇔ `reviewed_at IS NULL`」，讓審核紀錄不會殘缺。
+
+**這是新標籤進入系統的唯一通道。** AI 找不到合適的既有標籤時只能寫進這裡，
+沒有任何端點可以由名稱直接建立正式標籤（FR-TAG-06、§22 之 12）。
 
 ---
 

@@ -6,6 +6,7 @@ import { use } from 'react';
 
 import { AppShell } from '@/components/app-shell';
 import { QuestionForm } from '@/components/question-form';
+import { QuestionTagsEditor } from '@/components/question-tags-editor';
 import { ErrorBanner } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
 
@@ -33,6 +34,7 @@ export default function EditQuestionPage({ params }: { params: Promise<{ id: str
               目前版本 v{question.data.currentVersion}．每次儲存都會寫入一筆版本快照。
             </p>
             <QuestionForm existing={question.data} />
+            <QuestionTagsEditor questionId={id} />
           </>
         )}
       </div>

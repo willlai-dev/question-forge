@@ -333,18 +333,54 @@ uploaded → validating → validated ─────┐
 | 方法 | 路徑 |
 |---|---|
 | `GET` `POST` | `/knowledge-tags` |
-| `PATCH` `DELETE` | `/knowledge-tags/:id` |
+| `GET` `PATCH` `DELETE` | `/knowledge-tags/:id` |
 | `POST` | `/knowledge-tags/:id/merge` — `{ "targetTagId": "uuid" }` |
-| `POST` | `/knowledge-tags/:id/deprecate` |
-| `GET` `POST` `DELETE` | `/tag-aliases` |
-| `GET` `POST` `PATCH` | `/skill-tags` |
-| `GET` `PATCH` | `/error-types` |
-| `GET` | `/tag-suggestions?status=pending` |
+| `POST` | `/knowledge-tags/:id/deprecate`、`/activate` |
+| `GET` `POST` | `/tag-aliases`；`DELETE /tag-aliases/:id` |
+| `GET` | `/tag-resolve?tagKind=&name=` — 把名稱解析成既有標籤 |
+| `GET` `POST` | `/skill-tags`；`PATCH /skill-tags/:id` |
+| `GET` | `/error-types`；`PATCH /error-types/:id` |
+| `GET` `POST` | `/tag-suggestions` |
 | `POST` | `/tag-suggestions/:id/approve` — 建立正式標籤 |
 | `POST` | `/tag-suggestions/:id/merge` — `{ "targetTagId": "uuid" }` |
 | `POST` | `/tag-suggestions/:id/reject` |
+| `GET` `PUT` | `/questions/:questionId/tags` |
+| `PUT` | `/mistakes/:questionId/error-types` |
 
-合併時既有題目關聯一併轉移，來源標籤狀態改為 `merged` 並記錄 `merged_into_id`；不刪除資料。
+### 名稱解析是唯一入口
+
+`GET /tag-resolve` 先比標籤本名、再比別名，回傳 `matchedTagId`（對不上為 `null`）。
+**Phase 4 的 AI 回傳標籤名稱時走的是同一支**：對得上就用既有標籤，對不上只能提交
+`tag-suggestion`。系統中不存在「由名稱直接建立正式標籤」的端點 —— 這是 §22 之 12 的實作基礎。
+
+正規化規則：**NFKC（全形轉半形）→ 轉小寫 → 去掉所有空白**。
+因此「行政處分」「 行政 處分 」「ＲＯＥ 分析」與「roe分析」都會收斂到同一個鍵。
+錯字（「行政處份」）**不會**被自動收斂，必須以別名明確登錄 ——
+正規化若開始猜測使用者意圖，就會製造更難查的錯誤。
+
+### 合併（FR-TAG-10）
+
+來源標籤的題目關聯全部轉移到目標；狀態改為 `merged` 並記錄 `merged_into_id`；
+來源名稱自動成為目標的別名；子標籤改掛到目標下。**不刪除任何資料。**
+
+最容易寫錯的情境是「某題同時掛了來源與目標」：直接改 `tag_id` 會撞主鍵，
+且可能違反 `(question_id) WHERE role = 'primary'` 的部分唯一索引。
+正確作法是合併兩列的角色（任一方是 `primary`，合併後就是 `primary`），再刪掉來源那一列。
+
+### 題目標籤
+
+走**獨立的** `PUT /questions/:id/tags`，不併入 `PATCH /questions/:id`：
+標籤是對題目的標註而非題目內容，走題目更新端點會連帶遞增 `currentVersion`、
+寫入版本快照，並讓 Phase 4 的 AI 分析快取（以 `content_hash` 為判準）失效。
+
+主要知識點最多 1 個、次要最多 2 個，三層把關：contract 的 `max(2)`、service 檢查、
+以及資料庫的部分唯一索引。
+
+### 錯誤類型不接受新增
+
+`error-types` 只有 `GET` 與 `PATCH`。自由新增會讓錯因統計失去可比較性；
+要讓某一項退場請把 `status` 設為 `deprecated`。
+fallback「無法判定」**不可停用** —— 沒有它，AI 判斷不出錯因時會被迫亂猜一個具體錯誤。
 
 ---
 

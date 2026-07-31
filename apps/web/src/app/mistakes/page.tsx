@@ -1,6 +1,8 @@
 'use client';
 
 import type {
+  ErrorTypeResponse,
+  KnowledgeTagResponse,
   MistakeResponse,
   MistakeStatsResponse,
   PaginationMeta,
@@ -34,10 +36,25 @@ function MistakesView() {
   const [page, setPage] = useState(1);
   const [subjectId, setSubjectId] = useState('');
   const [masteryState, setMasteryState] = useState('');
+  const [knowledgeTagId, setKnowledgeTagId] = useState('');
+  const [errorTypeId, setErrorTypeId] = useState('');
 
   const subjects = useQuery({
     queryKey: ['subjects'],
     queryFn: () => api.get<SubjectResponse[]>('/subjects'),
+  });
+
+  const knowledgeTags = useQuery({
+    queryKey: ['knowledge-tags', 'active'],
+    queryFn: () =>
+      api.get<{ items: KnowledgeTagResponse[]; pagination: PaginationMeta }>(
+        '/knowledge-tags?pageSize=100&status=active',
+      ),
+  });
+
+  const errorTypes = useQuery({
+    queryKey: ['error-types'],
+    queryFn: () => api.get<ErrorTypeResponse[]>('/error-types'),
   });
 
   const stats = useQuery({
@@ -48,6 +65,8 @@ function MistakesView() {
   const params = new URLSearchParams({ page: String(page), pageSize: '20' });
   if (subjectId) params.set('subjectId', subjectId);
   if (masteryState) params.set('masteryState', masteryState);
+  if (knowledgeTagId) params.set('knowledgeTagId', knowledgeTagId);
+  if (errorTypeId) params.set('errorTypeId', errorTypeId);
 
   const mistakes = useQuery({
     queryKey: ['mistakes', params.toString()],
@@ -58,7 +77,7 @@ function MistakesView() {
   const practice = useMutation({
     mutationFn: () =>
       api.post<QuizSessionResponse>('/mistakes/practice', {
-        ...(subjectId ? { subjectId } : {}),
+        ...(knowledgeTagId ? { knowledgeTagId } : subjectId ? { subjectId } : {}),
         ...(masteryState ? { masteryStates: [masteryState] } : {}),
         orderStrategy: 'random',
         shuffleOptions: true,
@@ -123,6 +142,36 @@ function MistakesView() {
           <option value="active">尚未掌握</option>
           <option value="improving">進步中</option>
           <option value="mastered">已掌握</option>
+        </select>
+        <select
+          className={selectClass}
+          value={knowledgeTagId}
+          onChange={(e) => {
+            setKnowledgeTagId(e.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="">全部知識點</option>
+          {knowledgeTags.data?.items.map((tag) => (
+            <option key={tag.id} value={tag.id}>
+              {tag.name}
+            </option>
+          ))}
+        </select>
+        <select
+          className={selectClass}
+          value={errorTypeId}
+          onChange={(e) => {
+            setErrorTypeId(e.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="">全部錯誤類型</option>
+          {errorTypes.data?.map((type) => (
+            <option key={type.id} value={type.id}>
+              {type.name}
+            </option>
+          ))}
         </select>
       </div>
 

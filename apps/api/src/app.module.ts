@@ -12,6 +12,7 @@ import { QuestionBankModule } from './modules/question-bank/question-bank.module
 import { QuestionsModule } from './modules/questions/questions.module';
 import { QuizModule } from './modules/quiz/quiz.module';
 import { StatsModule } from './modules/stats/stats.module';
+import { TagsModule } from './modules/tags/tags.module';
 
 /**
  * 應用程式根模組（模組化單體）。
@@ -30,6 +31,7 @@ import { StatsModule } from './modules/stats/stats.module';
     QuestionBankModule,
     QuestionsModule,
     ImportsModule,
+    TagsModule,
     QuizModule,
     StatsModule,
   ],

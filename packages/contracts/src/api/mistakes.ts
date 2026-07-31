@@ -19,6 +19,10 @@ export const listMistakesQuerySchema = paginationQuerySchema.extend({
   subjectId: uuidSchema.optional(),
   chapterId: z.union([uuidSchema, z.literal('none')]).optional(),
   questionGroupId: uuidSchema.optional(),
+  /** 依題目掛的知識點篩選（FR-MIS-02）。 */
+  knowledgeTagId: uuidSchema.optional(),
+  /** 依錯題被標記的錯誤類型篩選（FR-MIS-02）。 */
+  errorTypeId: uuidSchema.optional(),
   masteryState: masteryStateSchema.optional(),
   isResolved: z.enum(['true', 'false']).optional(),
   sort: z.enum(['lastMissed', 'mistakeCount', 'accuracy']).default('lastMissed'),
@@ -63,10 +67,21 @@ export const mistakeAttemptSchema = z.object({
 });
 export type MistakeAttempt = z.infer<typeof mistakeAttemptSchema>;
 
+export const mistakeErrorTypeSchema = z.object({
+  errorTypeId: z.string().uuid(),
+  code: z.string(),
+  name: z.string(),
+  occurrenceCount: z.number().int(),
+  source: z.enum(['manual', 'ai']),
+});
+export type MistakeErrorType = z.infer<typeof mistakeErrorTypeSchema>;
+
 export const mistakeDetailResponseSchema = mistakeResponseSchema.extend({
   options: z.array(z.object({ key: z.string(), text: z.string(), isCorrect: z.boolean() })),
   correctAnswers: z.array(z.string()),
   explanation: z.string().nullable(),
+  knowledgeTags: z.array(z.object({ id: z.string().uuid(), name: z.string(), role: z.string() })),
+  errorTypes: z.array(mistakeErrorTypeSchema),
   attempts: z.array(mistakeAttemptSchema),
 });
 export type MistakeDetailResponse = z.infer<typeof mistakeDetailResponseSchema>;
@@ -95,6 +110,7 @@ export const createMistakePracticeSchema = z
     subjectId: uuidSchema.optional(),
     chapterId: z.union([uuidSchema, z.literal('none')]).optional(),
     questionGroupId: uuidSchema.optional(),
+    knowledgeTagId: uuidSchema.optional(),
     masteryStates: z.array(masteryStateSchema).max(3).default([]),
     questionLimit: z.number().int().positive().max(QUIZ_QUESTION_LIMIT_MAX).nullish(),
     orderStrategy: orderStrategySchema.default('random'),

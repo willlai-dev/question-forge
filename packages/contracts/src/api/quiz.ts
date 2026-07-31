@@ -32,13 +32,14 @@ export type QuizSessionStatus = z.infer<typeof quizSessionStatusSchema>;
 export const quizSessionQuestionStatusSchema = z.enum(['unanswered', 'answered', 'skipped']);
 export type QuizSessionQuestionStatus = z.infer<typeof quizSessionQuestionStatusSchema>;
 
-/**
- * 出題範圍類型。
- *
- * `knowledge_tag` 屬 Phase 3（FR-QUIZ-06），資料庫的 CHECK 已先納入該值，
- * 但 API 目前只接受下列三種，避免宣稱支援尚未實作的功能。
- */
-export const quizScopeTypeSchema = z.enum(['subject', 'chapter', 'question_group']);
+/** 出題範圍類型。多個範圍之間取聯集。 */
+export const quizScopeTypeSchema = z.enum([
+  'subject',
+  'chapter',
+  'question_group',
+  /** 只作答特定知識點（FR-QUIZ-06）。 */
+  'knowledge_tag',
+]);
 export type QuizScopeType = z.infer<typeof quizScopeTypeSchema>;
 
 export const quizScopeInputSchema = z

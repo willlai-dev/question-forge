@@ -2,6 +2,7 @@
 
 import type {
   ChapterResponse,
+  KnowledgeTagResponse,
   PaginationMeta,
   QuestionGroupResponse,
   QuizSessionResponse,
@@ -26,7 +27,7 @@ export default function NewQuizPage() {
 const selectClass =
   'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
-type ScopeLevel = 'subject' | 'chapter' | 'question_group';
+type ScopeLevel = 'subject' | 'chapter' | 'question_group' | 'knowledge_tag';
 
 function NewQuizView() {
   const router = useRouter();
@@ -34,6 +35,7 @@ function NewQuizView() {
   const [subjectId, setSubjectId] = useState('');
   const [chapterId, setChapterId] = useState('');
   const [questionGroupId, setQuestionGroupId] = useState('');
+  const [knowledgeTagId, setKnowledgeTagId] = useState('');
   const [orderStrategy, setOrderStrategy] = useState<'sequential' | 'random'>('sequential');
   const [shuffleOptions, setShuffleOptions] = useState(false);
   const [revealMode, setRevealMode] = useState<'immediate' | 'after_submit'>('immediate');
@@ -65,18 +67,29 @@ function NewQuizView() {
     enabled: subjectId !== '',
   });
 
+  const knowledgeTags = useQuery({
+    queryKey: ['knowledge-tags', 'active'],
+    queryFn: () =>
+      api.get<{ items: KnowledgeTagResponse[]; pagination: PaginationMeta }>(
+        '/knowledge-tags?pageSize=100&status=active',
+      ),
+  });
+
   /**
    * 只送出最細的那一層範圍。
    * 同時送出科目與其下的題組會讓範圍取聯集，等於整個科目都出題 ——
    * 使用者選了題組卻拿到整科的題目，是最容易被誤會的錯誤。
+   * 知識點是另一個維度，選了就以它為準（FR-QUIZ-06）。
    */
-  const scopes: { scopeType: ScopeLevel; refId: string }[] = questionGroupId
-    ? [{ scopeType: 'question_group', refId: questionGroupId }]
-    : chapterId
-      ? [{ scopeType: 'chapter', refId: chapterId }]
-      : subjectId
-        ? [{ scopeType: 'subject', refId: subjectId }]
-        : [];
+  const scopes: { scopeType: ScopeLevel; refId: string }[] = knowledgeTagId
+    ? [{ scopeType: 'knowledge_tag', refId: knowledgeTagId }]
+    : questionGroupId
+      ? [{ scopeType: 'question_group', refId: questionGroupId }]
+      : chapterId
+        ? [{ scopeType: 'chapter', refId: chapterId }]
+        : subjectId
+          ? [{ scopeType: 'subject', refId: subjectId }]
+          : [];
 
   const create = useMutation({
     mutationFn: () =>
@@ -164,6 +177,22 @@ function NewQuizView() {
             </select>
           </Field>
         </div>
+
+        <Field label="或只作答特定知識點" hint="選了知識點就以它為準，忽略上方的科目／章節／題組">
+          <select
+            className={selectClass}
+            value={knowledgeTagId}
+            onChange={(e) => setKnowledgeTagId(e.target.value)}
+          >
+            <option value="">不依知識點篩選</option>
+            {knowledgeTags.data?.items.map((tag) => (
+              <option key={tag.id} value={tag.id}>
+                {tag.name}
+                {tag.subjectName ? `（${tag.subjectName}）` : ''}．{tag.usageCount} 題
+              </option>
+            ))}
+          </select>
+        </Field>
 
         <label className="flex items-center gap-2 text-sm">
           <input

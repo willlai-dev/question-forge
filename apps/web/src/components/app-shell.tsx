@@ -15,6 +15,7 @@ const NAV = [
   { href: '/subjects', label: '科目與章節' },
   { href: '/question-groups', label: '題組' },
   { href: '/questions', label: '題目' },
+  { href: '/tags', label: '標籤' },
   { href: '/imports', label: 'JSON 匯入' },
 ];
 

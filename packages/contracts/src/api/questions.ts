@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { paginationQuerySchema, uuidSchema } from './common';
+import { questionTagResponseSchema } from './tags';
 
 /**
  * 題目契約。
@@ -116,6 +117,12 @@ export const questionResponseSchema = z.object({
   status: questionStatusSchema,
   currentVersion: z.number().int(),
   contentHash: z.string(),
+  /**
+   * 標籤不列入 contentHash，也不會遞增 currentVersion ——
+   * 它們是對題目的標註，不是題目內容。改標籤因此不會讓 AI 分析快取失效。
+   */
+  knowledgeTags: z.array(questionTagResponseSchema).default([]),
+  skillTags: z.array(questionTagResponseSchema).default([]),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -130,6 +137,8 @@ export const listQuestionsQuerySchema = paginationQuerySchema.extend({
   status: questionStatusSchema.optional(),
   reviewRequired: z.enum(['true', 'false']).optional(),
   hasExplanation: z.enum(['true', 'false']).optional(),
+  /** 只找掛了這個知識點的題目；'none' 代表只找完全沒有知識點的題目。 */
+  knowledgeTagId: z.union([uuidSchema, z.literal('none')]).optional(),
   sort: z.enum(['number', 'created', 'updated']).default('number'),
   order: z.enum(['asc', 'desc']).default('asc'),
 });
