@@ -164,6 +164,23 @@ scripts/          環境變數啟動器、測試資料庫建立
 
 ## 疑難排解
 
+### 改了 `packages/contracts` 但行為沒變（例如驗證規則還是舊的）
+
+`apps/api` 引用的是 `packages/contracts` **建置後的 dist**，而 `nest start --watch`
+只監看 `apps/api/src`。因此執行中的後端進程會一直用著啟動當下載入記憶體的舊版契約，
+即使原始碼與 dist 都已更新。
+
+症狀：改了驗證規則，API 卻仍回舊的錯誤訊息。
+
+**確定有效的做法：重啟 `pnpm dev`**（Ctrl+C 後重跑）。
+
+判斷是不是這個問題：比對「原始碼」與「執行中的 API 實際回應」——
+
+```bash
+grep -n "PASSWORD_MIN_LENGTH" packages/contracts/src/api/auth.ts   # 原始碼
+curl -s http://localhost:4000/api/v1/auth/bootstrap                # 執行中的 API
+```
+
 ### `pnpm dev` 說找不到 `@repo/contracts`
 
 共用套件需要先建置：

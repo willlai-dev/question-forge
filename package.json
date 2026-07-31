@@ -15,7 +15,7 @@
     "redis:down": "docker compose down",
     "redis:logs": "docker compose logs -f redis",
     "build:packages": "pnpm --filter \"./packages/*\" build",
-    "dev": "pnpm build:packages && pnpm --parallel --filter \"./apps/*\" dev",
+    "dev": "pnpm build:packages && pnpm --parallel --filter \"./packages/*\" --filter \"./apps/*\" dev",
     "dev:api": "pnpm build:packages && pnpm --filter @repo/api dev",
     "dev:web": "pnpm build:packages && pnpm --filter @repo/web dev",
     "build": "pnpm build:packages && pnpm --filter \"./apps/*\" build",
