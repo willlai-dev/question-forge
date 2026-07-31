@@ -21,6 +21,7 @@
     "build": "pnpm build:packages && pnpm --filter \"./apps/*\" build",
     "typecheck": "pnpm build:packages && pnpm -r typecheck",
     "db:test:create": "node scripts/create-test-db.mjs",
+    "account:reset": "node scripts/reset-account.mjs",
     "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
