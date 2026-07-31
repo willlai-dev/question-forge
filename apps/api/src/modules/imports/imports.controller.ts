@@ -33,6 +33,7 @@ import { createZodDto, ZodValidationPipe } from 'nestjs-zod';
 
 import { AppException } from '../../common/app.exception';
 import { CurrentUser, type AuthenticatedUser } from '../../common/decorators';
+import { decodeMultipartFilename } from '../../common/multipart-filename';
 import { ENV } from '../../config/env.config';
 import { ImportsService } from './imports.service';
 
@@ -121,7 +122,11 @@ export class ImportsController {
       );
     }
 
-    return this.importsService.createBatch(user.id, file);
+    return this.importsService.createBatch(user.id, {
+      ...file,
+      // busboy 以 latin1 解讀 multipart 標頭，中文檔名會變成 mojibake，需還原。
+      originalname: decodeMultipartFilename(file.originalname),
+    });
   }
 
   @Get()
