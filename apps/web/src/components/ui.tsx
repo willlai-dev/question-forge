@@ -111,10 +111,33 @@ export function Card({ className, children }: { className?: string; children: Re
   return <div className={cn('rounded-lg border bg-card p-6', className)}>{children}</div>;
 }
 
-export function ErrorBanner({ message }: { message: string }) {
+/**
+ * 錯誤提示。
+ *
+ * 一定要把 details 攤開顯示：後端的統一錯誤格式中，message 對驗證失敗來說
+ * 只是「請求內容未通過驗證。」這種泛用句，真正有用的是逐欄位的 details。
+ * 只顯示 message 會讓使用者完全不知道要改哪裡。
+ */
+export function ErrorBanner({
+  message,
+  details,
+}: {
+  message: string;
+  details?: { path?: string; message: string }[];
+}) {
   return (
-    <div className="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-      {message}
+    <div className="space-y-1 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+      <p>{message}</p>
+      {details && details.length > 0 && (
+        <ul className="list-disc space-y-0.5 pl-5">
+          {details.map((detail, index) => (
+            <li key={index}>
+              {detail.path ? `${detail.path}：` : ''}
+              {detail.message}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

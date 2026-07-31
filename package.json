@@ -11,6 +11,8 @@
   "scripts": {
     "bootstrap:env": "node scripts/bootstrap-env.mjs",
     "postinstall": "node scripts/bootstrap-env.mjs --quiet",
+    "dev:ports": "node scripts/free-ports.mjs",
+    "dev:ports:kill": "node scripts/free-ports.mjs --kill",
     "redis:up": "docker compose up -d redis",
     "redis:down": "docker compose down",
     "redis:logs": "docker compose logs -f redis",

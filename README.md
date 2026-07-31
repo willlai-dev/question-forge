@@ -164,6 +164,18 @@ scripts/          環境變數啟動器、測試資料庫建立
 
 ## 疑難排解
 
+### 改了程式碼、也重啟了，行為卻完全沒變（Windows 常見）
+
+在 Windows 上對 `pnpm dev` 按 Ctrl+C 時，`pnpm → nest → node` 的孫行程常常不會跟著結束。
+舊的後端會繼續佔用 4000，新啟動的後端搶不到埠而失敗 —— 於是你的請求其實一直打到那個舊行程。
+
+```bash
+pnpm dev:ports        # 看看 3000 / 4000 被誰佔用、何時啟動的
+pnpm dev:ports:kill   # 終止它們，然後重新 pnpm dev
+```
+
+判斷依據：如果佔用行程的「啟動時間」早於你最後一次改動，那就是它。
+
 ### 改了 `packages/contracts` 但行為沒變（例如驗證規則還是舊的）
 
 `apps/api` 引用的是 `packages/contracts` **建置後的 dist**，而 `nest start --watch`

@@ -104,7 +104,7 @@ function PreviewView({ batchId }: { batchId: string }) {
         </Card>
       )}
 
-      {commitError && <ErrorBanner message={commitError.message} />}
+      {commitError && <ErrorBanner message={commitError.message} details={commitError.details} />}
 
       <div className="flex flex-wrap gap-2">
         {[

@@ -152,7 +152,7 @@ function QuestionGroupsView() {
             </Field>
           </div>
 
-          {error && <ErrorBanner message={error.message} />}
+          {error && <ErrorBanner message={error.message} details={error.details} />}
 
           <Button type="submit" disabled={!canSubmit || createGroup.isPending}>
             建立題組

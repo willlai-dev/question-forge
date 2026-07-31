@@ -244,7 +244,7 @@ export function QuestionForm({ existing }: { existing?: QuestionResponse }) {
         </div>
       </Card>
 
-      {serverError && <ErrorBanner message={serverError.message} />}
+      {serverError && <ErrorBanner message={serverError.message} details={serverError.details} />}
 
       <div className="flex gap-3">
         <Button type="submit" disabled={!canSubmit || mutation.isPending}>

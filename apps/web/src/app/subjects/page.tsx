@@ -73,7 +73,7 @@ function SubjectsView() {
         </form>
         {error && (
           <div className="mt-4">
-            <ErrorBanner message={error.message} />
+            <ErrorBanner message={error.message} details={error.details} />
           </div>
         )}
       </Card>
@@ -176,7 +176,7 @@ function ChapterPanel({ subject }: { subject: SubjectResponse }) {
 
       {error && (
         <div className="mt-3">
-          <ErrorBanner message={error.message} />
+          <ErrorBanner message={error.message} details={error.details} />
         </div>
       )}
 

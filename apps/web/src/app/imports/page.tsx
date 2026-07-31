@@ -103,7 +103,7 @@ function ImportsView() {
 
       <Card className="space-y-4">
         <h2 className="font-medium">步驟 2：上傳 JSON 檔</h2>
-        {error && <ErrorBanner message={error.message} />}
+        {error && <ErrorBanner message={error.message} details={error.details} />}
         <div className="flex items-center gap-3">
           <input
             ref={fileRef}

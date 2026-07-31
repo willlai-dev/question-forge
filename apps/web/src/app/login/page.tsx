@@ -46,7 +46,7 @@ export default function LoginPage() {
           className="space-y-5"
           onSubmit={form.handleSubmit((values) => mutation.mutate(values))}
         >
-          {serverError && <ErrorBanner message={serverError.message} />}
+          {serverError && <ErrorBanner message={serverError.message} details={serverError.details} />}
 
           <Field label="帳號" error={form.formState.errors.username?.message}>
             <Input {...form.register('username')} autoComplete="username" autoFocus />
