@@ -250,12 +250,20 @@ pnpm test                # 單元 + 整合
 pnpm build
 
 # 測試資料庫（首次或需重置時）
-pnpm db:test:create
-pnpm db:test:create -- --drop
+node scripts/create-test-db.mjs
+node scripts/create-test-db.mjs --drop
 
-# E2E（Phase 1 起）
-pnpm test:e2e
+# API 端到端驗證（Phase 1 起；需先啟動後端）
+pnpm test:api-e2e                                   # 打預設的 :4000
+BASE=http://localhost:4101/api/v1 pnpm test:api-e2e # 打測試資料庫上的實例
 ```
+
+> 端到端驗證建議打在**測試資料庫**上，而不是平常使用的資料庫 ——
+> 這些腳本會實際建立科目、題目與作答紀錄。作法是把後端以測試連線字串另起一個 port：
+>
+> ```bash
+> DATABASE_URL=<主連線字串把資料庫名稱換成 <db>_test> PORT=4101 node apps/api/dist/main.js
+> ```
 
 **規格 §20.18：不得假裝測試通過。** 每個 Phase 的實作報告必須附上實際執行的指令與輸出。
 
@@ -295,3 +303,26 @@ Phase 0 只交付架構與契約，尚無業務邏輯，因此沒有業務測試
 | 移除 `NVIDIA_API_KEY` 後啟動 | 明確錯誤訊息、**不含金鑰內容**、exit code 1 |
 
 自動化測試自 Phase 1 起隨功能一併建立。
+
+---
+
+## 8. Phase 2 的測試現況
+
+| 類別 | 內容 | 數量 |
+|---|---|---|
+| 單元 | 判分（§2.2、§2.3） | 15 |
+| 單元 | 熟練狀態與錯題摺疊（§2.5） | 18 |
+| 單元 | 隨機出題、選項洗牌與答案映射（§2.4） | 17 |
+| API E2E | `tests/api-e2e/phase2.mjs` | 104 |
+
+`tests/api-e2e/phase2.mjs` 針對規格 §22 之 5～10 的重點驗證：
+
+- **答案洩漏**：對整份 JSON 回應做**遞迴掃描**，任何非 null 的 `correctAnswers` / `isCorrect` /
+  `explanation` / `reveal` 都算失敗。逐欄位列舉會隨契約演進失效，掃描才擋得住日後新增的欄位。
+- **選項隨機後的判分**：在打亂的場次中送出真實代號，仍必須判為正確。
+- **修改答案不重複計入錯題**：同一題經歷「答錯 → 改為答對」後，`mistakeCount` 必須等於
+  實際答錯的次數，`totalAttempts` 必須等於詳情頁列出的歷次作答筆數。
+- **狀態機完整往返**：`active` → 連續答對 3 次 → `mastered` → 再答錯 → 退回 `active`，
+  且累計錯誤次數只增不減、紀錄不刪除。
+
+腳本連續執行兩次皆為 104 通過 0 失敗（不依賴資料庫初始狀態）。

@@ -10,6 +10,8 @@ import { HealthModule } from './modules/health/health.module';
 import { ImportsModule } from './modules/imports/imports.module';
 import { QuestionBankModule } from './modules/question-bank/question-bank.module';
 import { QuestionsModule } from './modules/questions/questions.module';
+import { QuizModule } from './modules/quiz/quiz.module';
+import { StatsModule } from './modules/stats/stats.module';
 
 /**
  * 應用程式根模組（模組化單體）。
@@ -17,8 +19,8 @@ import { QuestionsModule } from './modules/questions/questions.module';
  * 安全預設：認證與 CSRF 守衛都是「全域啟用」，端點必須以 @Public() / @SkipCsrf()
  * 明確宣告例外。忘記加守衛不會造成端點裸奔，只有明確標註才會放行。
  *
- * Phase 1b 起會加入 QuestionsModule 與 ImportsModule，
- * Phase 2 之後依 docs/IMPLEMENTATION_PLAN.md 逐步擴充。
+ * Phase 2 加入 QuizModule（作答與錯題）與 StatsModule（學習概況），
+ * 其後依 docs/IMPLEMENTATION_PLAN.md 逐步擴充。
  */
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { QuestionsModule } from './modules/questions/questions.module';
     QuestionBankModule,
     QuestionsModule,
     ImportsModule,
+    QuizModule,
+    StatsModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: AppZodValidationPipe },

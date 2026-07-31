@@ -1,0 +1,245 @@
+'use client';
+
+import type {
+  ChapterResponse,
+  PaginationMeta,
+  QuestionGroupResponse,
+  QuizSessionResponse,
+  SubjectResponse,
+} from '@repo/contracts';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useRouter } from 'next/navigation';
+import { useState } from 'react';
+
+import { AppShell } from '@/components/app-shell';
+import { Button, Card, ErrorBanner, Field } from '@/components/ui';
+import { api, ApiRequestError } from '@/lib/api-client';
+
+export default function NewQuizPage() {
+  return (
+    <AppShell>
+      <NewQuizView />
+    </AppShell>
+  );
+}
+
+const selectClass =
+  'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
+type ScopeLevel = 'subject' | 'chapter' | 'question_group';
+
+function NewQuizView() {
+  const router = useRouter();
+
+  const [subjectId, setSubjectId] = useState('');
+  const [chapterId, setChapterId] = useState('');
+  const [questionGroupId, setQuestionGroupId] = useState('');
+  const [orderStrategy, setOrderStrategy] = useState<'sequential' | 'random'>('sequential');
+  const [shuffleOptions, setShuffleOptions] = useState(false);
+  const [revealMode, setRevealMode] = useState<'immediate' | 'after_submit'>('immediate');
+  const [allowAnswerChange, setAllowAnswerChange] = useState(true);
+  const [onlyMistakes, setOnlyMistakes] = useState(false);
+  const [questionLimit, setQuestionLimit] = useState('');
+
+  const subjects = useQuery({
+    queryKey: ['subjects'],
+    queryFn: () => api.get<SubjectResponse[]>('/subjects'),
+  });
+
+  const chapters = useQuery({
+    queryKey: ['chapters', subjectId],
+    queryFn: () => api.get<ChapterResponse[]>(`/subjects/${subjectId}/chapters`),
+    enabled: subjectId !== '',
+  });
+
+  const groups = useQuery({
+    queryKey: ['question-groups', subjectId, chapterId],
+    queryFn: () => {
+      const params = new URLSearchParams({ pageSize: '100' });
+      if (subjectId) params.set('subjectId', subjectId);
+      if (chapterId) params.set('chapterId', chapterId);
+      return api.get<{ items: QuestionGroupResponse[]; pagination: PaginationMeta }>(
+        `/question-groups?${params}`,
+      );
+    },
+    enabled: subjectId !== '',
+  });
+
+  /**
+   * 只送出最細的那一層範圍。
+   * 同時送出科目與其下的題組會讓範圍取聯集，等於整個科目都出題 ——
+   * 使用者選了題組卻拿到整科的題目，是最容易被誤會的錯誤。
+   */
+  const scopes: { scopeType: ScopeLevel; refId: string }[] = questionGroupId
+    ? [{ scopeType: 'question_group', refId: questionGroupId }]
+    : chapterId
+      ? [{ scopeType: 'chapter', refId: chapterId }]
+      : subjectId
+        ? [{ scopeType: 'subject', refId: subjectId }]
+        : [];
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.post<QuizSessionResponse>('/quiz-sessions', {
+        mode: onlyMistakes ? 'mistake_review' : 'practice',
+        scopes,
+        orderStrategy,
+        shuffleOptions,
+        questionLimit: questionLimit === '' ? null : Number(questionLimit),
+        revealMode,
+        allowAnswerChange,
+        onlyMistakes,
+      }),
+    onSuccess: (session) => router.push(`/quiz/${session.id}`),
+  });
+
+  const error = create.error instanceof ApiRequestError ? create.error : null;
+  const canStart = scopes.length > 0 || onlyMistakes;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">開始作答</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          選擇出題範圍與作答方式，判分完全由程式執行。
+        </p>
+      </div>
+
+      {error && <ErrorBanner message={error.message} details={error.details} />}
+
+      <Card className="space-y-4">
+        <h2 className="font-medium">出題範圍</h2>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field label="科目">
+            <select
+              className={selectClass}
+              value={subjectId}
+              onChange={(e) => {
+                setSubjectId(e.target.value);
+                setChapterId('');
+                setQuestionGroupId('');
+              }}
+            >
+              <option value="">請選擇</option>
+              {subjects.data?.map((subject) => (
+                <option key={subject.id} value={subject.id}>
+                  {subject.name}（{subject.questionCount} 題）
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <Field label="章節" hint="不選則涵蓋整個科目">
+            <select
+              className={selectClass}
+              value={chapterId}
+              disabled={!subjectId}
+              onChange={(e) => {
+                setChapterId(e.target.value);
+                setQuestionGroupId('');
+              }}
+            >
+              <option value="">全部章節</option>
+              {chapters.data?.map((chapter) => (
+                <option key={chapter.id} value={chapter.id}>
+                  {chapter.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <Field label="題組" hint="不選則涵蓋上一層全部">
+            <select
+              className={selectClass}
+              value={questionGroupId}
+              disabled={!subjectId}
+              onChange={(e) => setQuestionGroupId(e.target.value)}
+            >
+              <option value="">全部題組</option>
+              {groups.data?.items.map((group) => (
+                <option key={group.id} value={group.id}>
+                  {group.name}（{group.questionCount} 題）
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={onlyMistakes}
+            onChange={(e) => setOnlyMistakes(e.target.checked)}
+          />
+          只作答錯題（與上方範圍取交集；不選範圍則涵蓋整本錯題本）
+        </label>
+      </Card>
+
+      <Card className="space-y-4">
+        <h2 className="font-medium">作答方式</h2>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field label="出題順序">
+            <select
+              className={selectClass}
+              value={orderStrategy}
+              onChange={(e) => setOrderStrategy(e.target.value as typeof orderStrategy)}
+            >
+              <option value="sequential">依題庫順序</option>
+              <option value="random">隨機</option>
+            </select>
+          </Field>
+
+          <Field label="答案顯示時機">
+            <select
+              className={selectClass}
+              value={revealMode}
+              onChange={(e) => setRevealMode(e.target.value as typeof revealMode)}
+            >
+              <option value="immediate">作答後立即顯示</option>
+              <option value="after_submit">交卷後才顯示</option>
+            </select>
+          </Field>
+
+          <Field label="題數上限" hint="留空表示全部">
+            <input
+              type="number"
+              min={1}
+              className={selectClass}
+              value={questionLimit}
+              onChange={(e) => setQuestionLimit(e.target.value)}
+              placeholder="全部"
+            />
+          </Field>
+        </div>
+
+        <div className="space-y-2 text-sm">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={shuffleOptions}
+              onChange={(e) => setShuffleOptions(e.target.checked)}
+            />
+            隨機排列選項順序
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={allowAnswerChange}
+              onChange={(e) => setAllowAnswerChange(e.target.checked)}
+            />
+            允許修改已作答的答案
+          </label>
+        </div>
+      </Card>
+
+      <div className="flex items-center gap-3">
+        <Button disabled={!canStart || create.isPending} onClick={() => create.mutate()}>
+          {create.isPending ? '出題中…' : '開始作答'}
+        </Button>
+        {!canStart && (
+          <span className="text-sm text-muted-foreground">請先選擇科目，或勾選「只作答錯題」</span>
+        )}
+      </div>
+    </div>
+  );
+}

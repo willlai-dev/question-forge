@@ -9,6 +9,9 @@ import { api, ApiRequestError, resetCsrfToken } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 
 const NAV = [
+  { href: '/dashboard', label: '概況' },
+  { href: '/quiz', label: '作答' },
+  { href: '/mistakes', label: '錯題本' },
   { href: '/subjects', label: '科目與章節' },
   { href: '/question-groups', label: '題組' },
   { href: '/questions', label: '題目' },

@@ -9,3 +9,4 @@ export * from './_shared';
 export * from './identity';
 export * from './question-bank';
 export * from './import';
+export * from './quiz';

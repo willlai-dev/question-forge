@@ -8,9 +8,21 @@
 - AI 三階段深度解析（含網路查證與來源引用）
 - 多題整合的弱點診斷
 
-> **目前狀態：Phase 1 已完成**——可建立帳號、管理題庫階層、手動建題，
-> 並以外部 AI 整理的 JSON 匯入整份題庫（含逐題驗證與預覽修正）。
-> 作答與錯題系統屬 Phase 2。詳見 [實作計畫](./docs/IMPLEMENTATION_PLAN.md)。
+> **目前狀態：Phase 2 已完成**——可建立帳號、管理題庫階層、手動建題或以外部 AI 整理的
+> JSON 匯入整份題庫，並且可以**實際刷題**：選範圍出題、程式判分、即答或交卷後對答案、
+> 答錯自動進錯題本並追蹤熟練狀態、直接從錯題本開重練場次。
+> 標籤系統屬 Phase 3，AI 解析屬 Phase 4。詳見 [實作計畫](./docs/IMPLEMENTATION_PLAN.md)。
+
+### 主要頁面
+
+| 路徑 | 用途 |
+|---|---|
+| `/dashboard` | 學習概況：作答數、正確率、錯題分布、近期場次 |
+| `/quiz/new` | 選出題範圍與作答方式，開始作答 |
+| `/quiz` | 作答場次歷史；未交卷的可回去接著作答 |
+| `/mistakes` | 錯題本，可依科目與熟練狀態篩選並一鍵重練 |
+| `/subjects`、`/question-groups`、`/questions` | 題庫維護 |
+| `/imports` | JSON 匯入（含逐題驗證與預覽修正） |
 
 ---
 
@@ -99,6 +111,9 @@ pnpm test                # 單元測試
 pnpm build
 
 # API 端到端驗證（需先啟動後端；預設打 :4000，可用 BASE 覆寫）
+# 會實際建立科目、題目與作答紀錄，建議打在測試資料庫上：
+#   node scripts/create-test-db.mjs
+#   DATABASE_URL=<...把資料庫名稱換成 <db>_test> PORT=4101 node apps/api/dist/main.js
 pnpm test:api-e2e
 BASE=http://localhost:4101/api/v1 pnpm test:api-e2e
 

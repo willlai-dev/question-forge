@@ -8,7 +8,7 @@ import { api } from '@/lib/api-client';
 
 /**
  * 進入點：依系統狀態決定去向。
- * 尚未初始化 → /setup；已初始化 → /subjects（未登入時由 AppShell 導向 /login）。
+ * 尚未初始化 → /setup；已初始化 → /dashboard（未登入時由 AppShell 導向 /login）。
  */
 export default function HomePage() {
   const router = useRouter();
@@ -21,7 +21,7 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!data) return;
-    router.replace(data.canBootstrap ? '/setup' : '/subjects');
+    router.replace(data.canBootstrap ? '/setup' : '/dashboard');
   }, [data, router]);
 
   return (

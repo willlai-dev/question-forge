@@ -228,22 +228,41 @@ uploaded → validating → validated ─────┐
   "revealMode": "after_submit",
   "allowAnswerChange": true,
   "onlyMistakes": false,
-  "knowledgeTagIds": []
+  "masteryStates": []
 }
 ```
 
-若範圍內沒有符合條件的題目，回 `422 QUIZ_NO_QUESTIONS_MATCHED`。
+- `scopeType` 目前接受 `subject` / `chapter` / `question_group`，多個範圍之間取**聯集**。
+- `onlyMistakes` 與範圍取**交集**；`masteryStates` 只能搭配 `onlyMistakes` 使用。
+- 範圍內沒有可作答的題目 → `422 QUIZ_NO_QUESTIONS_MATCHED`；範圍 ID 不存在 → `404`。
+- 沒有給任何範圍且未勾選 `onlyMistakes` → `400 VALIDATION_FAILED`。
+
+> `knowledgeTagIds`（只作答特定知識點，FR-QUIZ-06）屬 Phase 3。
+> 資料庫的 `quiz_session_scopes.scope_type` CHECK 已預留 `knowledge_tag`，屆時只需開放 API。
 
 ### 答案揭露規則（重要）
 
-`GET /quiz-sessions/:id/questions/:position` 的回應：
+**整份作答契約中，正確答案只會出現在單一個可為 null 的 `reveal` 物件裡：**
+
+```json
+"reveal": { "isCorrect": true, "correctAnswers": ["B"], "explanation": "…" }
+```
+
+不揭露時 `reveal` 為 `null`。之所以收斂成一個欄位而不是把 `isCorrect`、`correctAnswers`、
+`explanation` 平鋪在回應各處，是因為後者每新增一個欄位就多一條可能的洩漏管道，而且很難測；
+收斂之後「答案只有一個出口」在契約層一眼可見，測試也只需斷言 `reveal === null`。
 
 | `revealMode` | 交卷前 | 交卷後 |
 |---|---|---|
-| `immediate` | 不含正確答案；**作答後**由 `POST /answers` 的回應揭露 | 含正確答案 |
-| `after_submit` | **完全不含任何正確答案資訊**（無 `isCorrect`、無 `correctAnswers`、無 `explanation`） | 含正確答案與解析 |
+| `immediate` | 未作答 → `null`；**作答後**才揭露 | 揭露 |
+| `after_submit` | **一律 `null`** | 揭露 |
 
-> 這是契約層的硬性保證，不是前端隱藏。`after_submit` 模式下若在交卷前請求結果，回 `409 QUIZ_ANSWER_NOT_REVEALED_YET`。整合測試會逐欄位檢查回應中不含答案欄位。
+同樣的理由，`GET /quiz-sessions/:id` 的 `correctCount` 在 `after_submit` 模式交卷前為 `null` ——
+那個數字本身就足以反推剛才那題答對沒有。
+
+> 這是契約層的硬性保證，不是前端隱藏。`after_submit` 模式下若在交卷前請求結果，回
+> `409 QUIZ_ANSWER_NOT_REVEALED_YET`。端到端測試對整份回應做**遞迴掃描**，
+> 只要出現任何非 null 的答案類欄位就失敗 —— 逐欄位列舉會隨著契約演進而失效。
 
 `POST /quiz-sessions/:id/answers` 請求與回應：
 
@@ -254,18 +273,23 @@ uploaded → validating → validated ─────┐
 // 回應（revealMode = immediate）
 {
   "answerId": "uuid",
-  "isCorrect": true,
-  "correctAnswers": ["B"],
-  "explanation": "...",
-  "isProvisional": false
+  "recorded": true,
+  "answeredCount": 3,
+  "totalQuestions": 20,
+  "reveal": { "isCorrect": true, "correctAnswers": ["B"], "explanation": null }
 }
 
 // 回應（revealMode = after_submit）
-{ "answerId": "uuid", "recorded": true }
+{ "answerId": "uuid", "recorded": true, "answeredCount": 3, "totalQuestions": 20, "reveal": null }
 ```
 
 判分由程式完成（`gradeAnswer()` 純函式），**不呼叫任何 AI**。
-`allowAnswerChange = false` 時 `PATCH` 回 `409 QUIZ_ANSWER_CHANGE_NOT_ALLOWED`。
+複選題必須完全一致才給分，順序無關，部分正確與多選皆不給分。
+
+**修改答案**：對已作答的題目再次 `POST` 等同於 `PATCH`，兩者都套用同一套規則 ——
+前端不必判斷該用哪個動詞。`allowAnswerChange = false` 時兩者皆回
+`409 QUIZ_ANSWER_CHANGE_NOT_ALLOWED`。修改**不會**新增作答列，只更新原列並累加
+`answerChangedCount`，因此不會被誤算成兩次作答。
 
 ---
 
@@ -273,12 +297,34 @@ uploaded → validating → validated ─────┐
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
-| `GET` | `/mistakes` | 篩選：`subjectId`、`chapterId`、`questionGroupId`、`knowledgeTagIds`、`errorTypeIds`、`masteryState`、`page` |
+| `GET` | `/mistakes` | 篩選：`subjectId`、`chapterId`、`questionGroupId`、`masteryState`、`isResolved`、`page`（`knowledgeTagIds`、`errorTypeIds` 屬 Phase 3） |
 | `GET` | `/mistakes/:questionId` | 單題錯題詳情（含歷次作答） |
-| `POST` | `/mistakes/practice` | 由篩選條件直接建立重練場次，回傳 `quizSessionId` |
+| `POST` | `/mistakes/practice` | 由篩選條件直接建立重練場次，回傳完整場次物件 |
 | `GET` | `/mistakes/stats` | 錯題統計摘要 |
 
-回應包含 `mistakeCount`、`consecutiveCorrect`、`masteryState`、`lastMissedAt`、`isResolved`。
+回應包含 `mistakeCount`、`consecutiveCorrect`、`totalAttempts`、`recentAccuracy`、
+`masteryState`、`lastMissedAt`、`isResolved`。
+
+**本資源沒有刪除端點，這是刻意的**：答對一次不刪除錯題紀錄（FR-MIS-05），只改變 `masteryState`。
+
+錯題紀錄是 `user_answers` 的**衍生狀態**：每次作答後由該題完整作答歷史重新摺疊算出，
+而不是「答錯就 +1」的增量累加。因為使用者可以修改答案，增量寫法必須反向扣回上一次的效果，
+而 `mistakeCount` / `consecutiveCorrect` / `masteryState` 的反向運算並不唯一。
+重算則是冪等的，且 Phase 4 的爭議題排除（`is_provisional`）只要加在同一個查詢條件即可。
+
+`totalAttempts` 是該題的作答筆數（直接數 `user_answers`），與詳情頁列出的歷次作答一致。
+
+---
+
+## 7.1 學習概況
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| `GET` | `/stats/overview` | 題庫規模、作答數與正確率、平均作答時間、錯題分布、近期場次、各科目表現 |
+
+所有正確率相關數字一律排除 `is_provisional = true` 的作答（FR-QUIZ-14）。
+該欄位在 Phase 2 就建立且預設為 `false`，因此現在的結果不受影響，
+而 Phase 4 開始標記爭議題時統計會自動正確，不需要回頭改查詢。
 
 ---
 

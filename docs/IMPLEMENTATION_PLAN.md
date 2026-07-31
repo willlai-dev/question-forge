@@ -109,28 +109,44 @@
 
 ---
 
-## Phase 2：作答與錯題
+## Phase 2：作答與錯題 ✅ 已完成
 
 **目標**：能作答、能判分、答錯進錯題本。
 
-### 工作項目
+| 項目 | 內容 |
+|---|---|
+| 資料庫 | 5 張表（`quiz_sessions`、`quiz_session_scopes`、`quiz_session_questions`、`user_answers`、`mistake_records`）＋ `reveal_mode` enum，migration `0001_phase2_quiz_and_mistakes.sql` |
+| 出題 | 科目／章節／題組範圍（聯集）、只作答錯題（交集）、順序／隨機、選項隨機、題數上限 |
+| 判分 | `gradeAnswer()` 純函式；單選與複選（順序無關、部分正確與多選皆不給分） |
+| 揭露 | 答案收斂在單一個可為 null 的 `reveal` 欄位；`after_submit` 交卷前連 `correctCount` 都是 null |
+| 錯題 | 自動建立與更新、`computeMasteryState()`、篩選、詳情與歷次作答、重練 |
+| 統計 | `GET /stats/overview`：作答數、正確率、平均作答時間、錯題分布、近期場次、各科目表現 |
+| 前端 | `/dashboard`、`/quiz`、`/quiz/new`、`/quiz/[sessionId]`、`/quiz/[sessionId]/result`、`/mistakes`、`/mistakes/[questionId]` |
+| 測試 | 50 個單元測試（判分 15、熟練狀態 18、隨機與答案映射 17）＋ 104 項 API 端到端驗證 |
 
-1. **資料庫**：`quiz_sessions`、`quiz_session_scopes`、`quiz_session_questions`、`user_answers`、`mistake_records`、`mistake_record_error_types`
-2. **出題**：範圍解析、順序策略、選項隨機（`option_order` + `seed`）、題數限制
-3. **判分**：`gradeAnswer()` 純函式，單選與複選規則
-4. **揭露模式**：`immediate` 與 `after_submit` 的回應差異，**契約層保證交卷前不洩漏答案**
-5. **錯題**：自動建立與更新、`computeMasteryState()` 純函式、篩選、重練
-6. **統計**：作答進度、正確率、答題時間
-7. **前端**：`/quiz/new`、`/quiz/[sessionId]`、`/quiz/[sessionId]/result`、`/mistakes`、`/dashboard`
+實測確認的關鍵行為：
 
-### 測試
+- `after_submit` 模式交卷前，**對整份回應做遞迴掃描**（不是逐欄位列舉）找不到任何答案類欄位
+- 交卷前索取結果 → `409 QUIZ_ANSWER_NOT_REVEALED_YET`；交卷後同一支端點才回傳答案
+- 選項隨機化後，選中真實代號仍判為正確；打亂的是顯示順序，判分永遠比對 `correct_answers_snapshot`
+- 複選題順序相反判為答對；部分正確與多選皆不給分
+- 修改答案不新增作答列，因此**不會被重複計入錯題次數**，場次已作答數也不會虛增
+- 連續答對 3 次 → `mastered`；再答錯一次 → 退回 `active` 且累計錯誤次數 +1，**紀錄不刪除**
+- 第一次就答對的題目不會進錯題本；`totalAttempts` 與詳情頁列出的歷次作答筆數一致
+- 空題組出題 → `422 QUIZ_NO_QUESTIONS_MATCHED`；不存在的科目 → `404 SUBJECT_NOT_FOUND`
+- 未作答題目在結果頁 `isCorrect` 為 `null`（與答錯區分），但計分時視同答錯
 
-- 單元：單選判分、複選判分（順序無關、部分正確不給分）、選項映射、熟練狀態全部轉換
-- 整合：答錯建立錯題紀錄、交卷前逐欄位斷言無答案洩漏、禁改答案回 409
-- E2E：即答模式、交卷模式、查看錯題、重新練習
+### 與原規劃的差異
+
+| 項目 | 原規劃 | 實際 | 理由 |
+|---|---|---|---|
+| 資料表數 | 6 張 | **5 張** | `mistake_record_error_types` 與 `mistake_records.last_error_type_id` 需外鍵指向 Phase 3 的 `error_types`，一併延後；不建立沒有外鍵的孤兒欄位 |
+| 錯題更新方式 | 未指定 | **由作答歷史重算** | 使用者可修改答案，增量累加需要不唯一的反向運算；重算是冪等的 |
+| `POST /answers` 回應 | 兩種不同形狀 | **統一含 `reveal`** | 答案只有一個出口，測試可用單一斷言鎖住 |
+| `knowledgeTagIds` | 列於請求 | **移除，Phase 3 再加** | FR-QUIZ-06 本就屬 P3；不宣稱支援尚未實作的功能 |
 
 ### 驗收對照
-規格 §22 之 5、6、7、8、9、10
+規格 §22 之 5、6、7、8、9、10 —— 全數達成。
 
 ---
 
@@ -140,7 +156,7 @@
 
 ### 工作項目
 
-1. **資料庫**：`knowledge_tags`、`skill_tags`、`error_types`、`question_knowledge_tags`、`question_skill_tags`、`tag_aliases`、`tag_suggestions`
+1. **資料庫**：`knowledge_tags`、`skill_tags`、`error_types`、`question_knowledge_tags`、`question_skill_tags`、`tag_aliases`、`tag_suggestions`，以及由 Phase 2 移入的 `mistake_record_error_types` 與 `mistake_records.last_error_type_id`（兩者都需要 `error_types` 才能建立外鍵）
 2. **種子資料**：6 種能力類型、8 種錯誤類型（含 fallback「無法判定」）
 3. **正規化**：別名比對（去空白、大小寫、全形半形）
 4. **管理**：新增、改名、合併（含關聯轉移）、停用
@@ -240,9 +256,9 @@
 | Phase | 主題 | 新增資料表 | 主要風險 |
 |---|---|---|---|
 | 0 ✅ | 架構與契約 | 0 | — |
-| 1 | 題庫核心 | 13 | 匯入驗證規則繁多，需逐條測試 |
-| 2 | 作答與錯題 | 6 | 答案洩漏；選項映射錯誤 |
-| 3 | 標籤系統 | 7 | 合併時的關聯轉移與 primary 衝突 |
+| 1 ✅ | 題庫核心 | 13 | 匯入驗證規則繁多，需逐條測試 |
+| 2 ✅ | 作答與錯題 | 5 | 答案洩漏；選項映射錯誤 |
+| 3 | 標籤系統 | 7 + 1（`mistake_record_error_types`，由 Phase 2 移入） | 合併時的關聯轉移與 primary 衝突 |
 | 4 | AI 與搜尋 | 8 | **最高**：外部相依、延遲、額度、輸出品質 |
 | 5 | 多題分析與管理 | 2 | 統計查詢效能與正確性 |
 

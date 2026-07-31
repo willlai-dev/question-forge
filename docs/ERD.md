@@ -312,22 +312,34 @@ PK：`(question_id, knowledge_tag_id)`
 | `id`、`user_id`、`question_id` | |
 | `mistake_count` | int，累計答錯次數 |
 | `consecutive_correct` | int，連續答對次數 |
-| `total_attempts` | int |
-| `recent_accuracy` | numeric，近 N 次正確率 |
+| `total_attempts` | int，該題的作答筆數（直接數 `user_answers`） |
+| `recent_accuracy` | numeric，近 10 次正確率 |
 | `mastery_state` | `active`／`improving`／`mastered` |
 | `first_missed_at`、`last_missed_at`、`last_answered_at` | |
-| `last_error_type_id` | FK → error_types |
-| `is_resolved` | boolean |
+| `last_error_type_id` | FK → error_types（**Phase 3**，見下方說明） |
+| `is_resolved` | boolean，是否曾經重新答對過；一旦為 true 不再變回 false |
 
 唯一：`(user_id, question_id)`
 
-### `mistake_record_error_types`
+CHECK `mastery_state` 必須與 `consecutive_correct` 一致（0 → active、1～2 → improving、≥3 → mastered），
+由資料庫直接鎖住 `computeMasteryState()` 的規則，任何寫入路徑都繞不過去。
+
+> **錯題紀錄是 `user_answers` 的衍生狀態**，不是獨立累加的計數器。
+> 每次作答後由該題完整作答歷史重新摺疊算出（`MistakeRecordsService.recompute`）。
+> 理由見 API_CONTRACT §7。
+
+### `mistake_record_error_types`（Phase 3）
 支援「依錯誤類型篩選錯題」（FR-MIS-02）。
 `mistake_record_id`、`error_type_id`、`occurrence_count`、`source`
 
+本表與 `mistake_records.last_error_type_id` 都需要外鍵指向 `error_types`，
+而該表屬 Phase 3，因此**一併延後至 Phase 3 建立** ——
+先建立沒有外鍵的孤兒欄位會違反本專案「參照完整性由資料庫保證」的原則。
+Phase 2 因此實際新增 5 張表而非 6 張。
+
 ### 熟練狀態規則
 
-純函式 `computeMasteryState(consecutiveCorrect)`：
+純函式 `computeMasteryState(consecutiveCorrect)`（實作於 `@repo/contracts` 的 `quiz/mastery.ts`）：
 
 | 條件 | 狀態 |
 |---|---|
