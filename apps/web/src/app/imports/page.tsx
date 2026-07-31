@@ -8,7 +8,7 @@ import { useRef, useState } from 'react';
 
 import { AppShell } from '@/components/app-shell';
 import { Button, Card, EmptyState, ErrorBanner } from '@/components/ui';
-import { api, ApiRequestError } from '@/lib/api-client';
+import { api, ApiRequestError, getCsrfToken, resetCsrfToken } from '@/lib/api-client';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
 
@@ -38,8 +38,10 @@ function ImportsView() {
 
   const upload = useMutation({
     mutationFn: async (file: File) => {
-      // 上傳走 multipart，因此不經過 api-client 的 JSON 路徑，但仍需帶上 CSRF token。
-      const { csrfToken } = await api.get<{ csrfToken: string }>('/auth/csrf');
+      // 上傳走 multipart，不經過 api-client 的 JSON 路徑，但 CSRF token
+      // 必須向 getCsrfToken() 取得 —— 直接呼叫 /auth/csrf 會產生新 token
+      // 並覆寫 cookie，讓 api-client 快取的那個立刻失效，後續操作全部 403。
+      const csrfToken = await getCsrfToken();
       const form = new FormData();
       form.append('file', file);
       const res = await fetch(`${API_BASE}/imports`, {
@@ -50,10 +52,12 @@ function ImportsView() {
       });
       const payload = await res.json();
       if (!res.ok) {
+        if (payload?.error?.code === 'CSRF_TOKEN_INVALID') resetCsrfToken();
         throw new ApiRequestError(
           res.status,
           payload?.error?.code ?? 'UNKNOWN',
           payload?.error?.message ?? '上傳失敗',
+          payload?.error?.details,
         );
       }
       return payload as ImportBatchResponse;

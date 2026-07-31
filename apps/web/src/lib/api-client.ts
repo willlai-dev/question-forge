@@ -32,15 +32,34 @@ export class ApiRequestError extends Error {
   }
 }
 
+/**
+ * CSRF token 管理。
+ *
+ * 重點：後端每次呼叫 GET /auth/csrf 都會產生新 token 並覆寫 csrf_token cookie，
+ * 使先前取得的 token 立刻失效。因此全前端「只能有一個地方」去取 token ——
+ * 任何額外的直接呼叫都會讓這裡快取的值變成過期，造成後續請求 403。
+ * 需要 token 的地方（例如 multipart 上傳）一律使用 getCsrfToken()。
+ */
 let csrfToken: string | null = null;
+let inFlight: Promise<string> | null = null;
 
-async function ensureCsrfToken(): Promise<string> {
+export async function getCsrfToken(): Promise<string> {
   if (csrfToken) return csrfToken;
-  const res = await fetch(`${API_BASE_URL}/auth/csrf`, { credentials: 'include' });
-  if (!res.ok) throw new ApiRequestError(res.status, 'CSRF_FETCH_FAILED', '無法取得 CSRF token。');
-  const data = (await res.json()) as { csrfToken: string };
-  csrfToken = data.csrfToken;
-  return csrfToken;
+
+  // 併發請求共用同一次取得，避免互相覆寫 cookie。
+  inFlight ??= (async () => {
+    const res = await fetch(`${API_BASE_URL}/auth/csrf`, { credentials: 'include' });
+    if (!res.ok) {
+      throw new ApiRequestError(res.status, 'CSRF_FETCH_FAILED', '無法取得 CSRF token。');
+    }
+    const data = (await res.json()) as { csrfToken: string };
+    csrfToken = data.csrfToken;
+    return csrfToken;
+  })().finally(() => {
+    inFlight = null;
+  });
+
+  return inFlight;
 }
 
 /** 登出或 CSRF 失效時呼叫，強制下次重新取得。 */
@@ -54,6 +73,14 @@ export interface ApiFetchOptions extends Omit<RequestInit, 'body' | 'method'> {
 }
 
 export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {
+  return sendRequest<T>(path, options, false);
+}
+
+async function sendRequest<T>(
+  path: string,
+  options: ApiFetchOptions,
+  isRetry: boolean,
+): Promise<T> {
   const { body, headers, method = 'GET', ...rest } = options;
 
   const finalHeaders: Record<string, string> = {
@@ -62,7 +89,7 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
   };
 
   if (MUTATING_METHODS.has(method.toUpperCase())) {
-    finalHeaders['X-CSRF-Token'] = await ensureCsrfToken();
+    finalHeaders['X-CSRF-Token'] = await getCsrfToken();
   }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -81,7 +108,14 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
   if (!response.ok) {
     const error = (payload as ApiError | undefined)?.error;
 
-    // CSRF token 失效時清掉快取，讓下次請求重新取得。
+    // CSRF token 過期是可自行修復的狀況（例如 cookie 被另一次取得覆寫），
+    // 重新取得後重試一次即可，不需要讓使用者看到錯誤或手動重新整理。
+    // 只重試一次，避免在真正的設定錯誤下無限迴圈。
+    if (error?.code === 'CSRF_TOKEN_INVALID' && !isRetry) {
+      resetCsrfToken();
+      return sendRequest<T>(path, options, true);
+    }
+
     if (error?.code === 'CSRF_TOKEN_INVALID') resetCsrfToken();
 
     throw new ApiRequestError(
