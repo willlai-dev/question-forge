@@ -54,7 +54,10 @@
 
 - **argon2id**（`@node-rs/argon2`，napi-rs 預編譯，Windows 免安裝 build toolchain）。
 - 參數：memoryCost 19456 KiB、timeCost 2、parallelism 1（OWASP 建議值）。
-- 最短 12 字元，不得與帳號相同。
+- **最短 8 字元**，不得與帳號相同。
+  - 取捨：8 字元弱於一般建議的 12。此值適用於「只在本機執行、單一使用者、不對外開放」的前提；
+    離線破解仍受 argon2id 的 memoryCost 保護。**若日後對外開放，必須調回 12 以上**
+    （只需修改 `packages/contracts/src/api/auth.ts` 的 `PASSWORD_MIN_LENGTH`，前後端會同步生效）。
 - 明文永不寫入資料庫、log 或 API 回應。
 
 ### 2.3 Token

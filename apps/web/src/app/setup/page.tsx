@@ -1,13 +1,18 @@
 'use client';
 
-import { bootstrapRequestSchema, type BootstrapRequest, type UserResponse } from '@repo/contracts';
+import {
+  bootstrapRequestSchema,
+  PASSWORD_MIN_LENGTH,
+  type BootstrapRequest,
+  type UserResponse,
+} from '@repo/contracts';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 
-import { Button, Card, ErrorBanner, Field, Input } from '@/components/ui';
+import { Button, Card, ErrorBanner, Field, Input, PasswordInput } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
 
 /**
@@ -70,10 +75,10 @@ export default function SetupPage() {
 
           <Field
             label="密碼"
-            hint="至少 12 個字元，且不得與帳號相同。"
+            hint={`至少 ${PASSWORD_MIN_LENGTH} 個字元，且不得與帳號相同。`}
             error={form.formState.errors.password?.message ?? serverError?.fieldError('password')}
           >
-            <Input type="password" {...form.register('password')} autoComplete="new-password" />
+            <PasswordInput {...form.register('password')} autoComplete="new-password" />
           </Field>
 
           <Field
@@ -83,11 +88,7 @@ export default function SetupPage() {
               serverError?.fieldError('confirmPassword')
             }
           >
-            <Input
-              type="password"
-              {...form.register('confirmPassword')}
-              autoComplete="new-password"
-            />
+            <PasswordInput {...form.register('confirmPassword')} autoComplete="new-password" />
           </Field>
 
           <Button type="submit" className="w-full" disabled={mutation.isPending}>

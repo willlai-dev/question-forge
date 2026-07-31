@@ -14,9 +14,18 @@ export const usernameSchema = z
   .max(50, '帳號最多 50 個字元')
   .regex(/^[A-Za-z0-9._-]+$/, '帳號只能包含英文字母、數字、點、底線與連字號');
 
+/**
+ * 密碼長度下限為 8。
+ *
+ * 取捨說明：8 字元在暴力破解下弱於 12，但本系統只在本機執行、
+ * 單一使用者、不對外開放，且以 argon2id 雜湊儲存（memoryCost 19 MiB），
+ * 離線破解成本仍然很高。若日後對外開放，這個值應該調回 12 以上。
+ */
+export const PASSWORD_MIN_LENGTH = 8;
+
 export const passwordSchema = z
   .string()
-  .min(12, '密碼至少 12 個字元')
+  .min(PASSWORD_MIN_LENGTH, `密碼至少 ${PASSWORD_MIN_LENGTH} 個字元`)
   .max(200, '密碼最多 200 個字元');
 
 /** GET /auth/bootstrap 的回應：是否仍可執行首次初始化。 */

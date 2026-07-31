@@ -17,7 +17,7 @@
 | FR-AUTH-05 | Refresh token 採輪替（rotation）；資料庫只存雜湊值；使用過的舊 token 立即失效。 | P1 |
 | FR-AUTH-06 | 所有狀態變更請求需通過 CSRF 檢查（double-submit token + Origin 檢查）。 | P1 |
 | FR-AUTH-07 | 登出清除 Cookie 並撤銷該 refresh token。 | P1 |
-| FR-AUTH-08 | 密碼最短 12 字元，且不得與帳號相同。 | P1 |
+| FR-AUTH-08 | 密碼最短 8 字元，且不得與帳號相同。 | P1 |
 
 ## 2. 題庫階層（科目／章節／題組）
 

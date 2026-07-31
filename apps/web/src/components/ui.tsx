@@ -1,6 +1,7 @@
 'use client';
 
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
+import { forwardRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
 
@@ -46,6 +47,44 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
     />
   );
 }
+
+/**
+ * 密碼輸入框，附顯示／隱藏切換。
+ *
+ * 用 forwardRef 是為了讓 React Hook Form 的 register() 能取得 ref。
+ * 切換鈕標記 tabIndex={-1}，避免打斷「密碼 → 確認密碼 → 送出」的 Tab 流程。
+ */
+export const PasswordInput = forwardRef<
+  HTMLInputElement,
+  Omit<InputHTMLAttributes<HTMLInputElement>, 'type'>
+>(function PasswordInput({ className, ...props }, ref) {
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <div className="relative">
+      <input
+        ref={ref}
+        type={visible ? 'text' : 'password'}
+        className={cn(
+          'h-9 w-full rounded-md border border-input bg-background px-3 pr-10 text-sm',
+          'placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          className,
+        )}
+        {...props}
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={() => setVisible((v) => !v)}
+        aria-label={visible ? '隱藏密碼' : '顯示密碼'}
+        title={visible ? '隱藏密碼' : '顯示密碼'}
+        className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-muted-foreground transition hover:text-foreground"
+      >
+        {visible ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
+    </div>
+  );
+});
 
 export function Field({
   label,

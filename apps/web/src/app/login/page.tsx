@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 
-import { Button, Card, ErrorBanner, Field, Input } from '@/components/ui';
+import { Button, Card, ErrorBanner, Field, Input, PasswordInput } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
 
 export default function LoginPage() {
@@ -53,7 +53,7 @@ export default function LoginPage() {
           </Field>
 
           <Field label="密碼" error={form.formState.errors.password?.message}>
-            <Input type="password" {...form.register('password')} autoComplete="current-password" />
+            <PasswordInput {...form.register('password')} autoComplete="current-password" />
           </Field>
 
           <Button type="submit" className="w-full" disabled={mutation.isPending}>

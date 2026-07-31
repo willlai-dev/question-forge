@@ -15,7 +15,7 @@ describe('bootstrapRequestSchema', () => {
     expect(bootstrapRequestSchema.safeParse(validBootstrap).success).toBe(true);
   });
 
-  it('密碼少於 12 字元 → 失敗', () => {
+  it('密碼少於 8 字元 → 失敗', () => {
     const r = bootstrapRequestSchema.safeParse({
       ...validBootstrap,
       password: 'short',
@@ -23,6 +23,25 @@ describe('bootstrapRequestSchema', () => {
     });
     expect(r.success).toBe(false);
     expect(r.error?.issues.some((i) => i.path.includes('password'))).toBe(true);
+  });
+
+  it('邊界：7 字元 → 失敗，8 字元 → 通過', () => {
+    const seven = 'abc1234';
+    const eight = 'abc12345';
+    expect(
+      bootstrapRequestSchema.safeParse({
+        ...validBootstrap,
+        password: seven,
+        confirmPassword: seven,
+      }).success,
+    ).toBe(false);
+    expect(
+      bootstrapRequestSchema.safeParse({
+        ...validBootstrap,
+        password: eight,
+        confirmPassword: eight,
+      }).success,
+    ).toBe(true);
   });
 
   it('兩次密碼不一致 → 失敗且指向 confirmPassword', () => {
