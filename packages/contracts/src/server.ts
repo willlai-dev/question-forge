@@ -6,3 +6,4 @@
  */
 
 export * from './content-hash';
+export * from './ai/cache-key';

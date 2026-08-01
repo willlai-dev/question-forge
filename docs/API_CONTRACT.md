@@ -103,7 +103,7 @@
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
-| `GET` | `/questions` | 篩選：`q`、`subjectId`、`chapterId`、`questionGroupId`、`type`、`knowledgeTagIds`、`errorTypeIds`、`reviewRequired`、`status`、`hasExplanation`、`page`、`pageSize`、`sort` |
+| `GET` | `/questions` | 篩選：`q`、`subjectId`、`chapterId`、`questionGroupId`、`type`、`knowledgeTagId`（傳 `none` 可找出沒有知識點的題目）、`reviewRequired`、`status`、`hasExplanation`、`page`、`pageSize`、`sort` |
 | `POST` | `/questions` | 建立 |
 | `GET` `PATCH` `DELETE` | `/questions/:id` | |
 | `POST` | `/questions/bulk` | 批次操作 |
@@ -232,13 +232,12 @@ uploaded → validating → validated ─────┐
 }
 ```
 
-- `scopeType` 目前接受 `subject` / `chapter` / `question_group`，多個範圍之間取**聯集**。
+- `scopeType` 接受 `subject` / `chapter` / `question_group` / `knowledge_tag`，多個範圍之間取**聯集**。
 - `onlyMistakes` 與範圍取**交集**；`masteryStates` 只能搭配 `onlyMistakes` 使用。
 - 範圍內沒有可作答的題目 → `422 QUIZ_NO_QUESTIONS_MATCHED`；範圍 ID 不存在 → `404`。
 - 沒有給任何範圍且未勾選 `onlyMistakes` → `400 VALIDATION_FAILED`。
 
-> `knowledgeTagIds`（只作答特定知識點，FR-QUIZ-06）屬 Phase 3。
-> 資料庫的 `quiz_session_scopes.scope_type` CHECK 已預留 `knowledge_tag`，屆時只需開放 API。
+> 只作答特定知識點（FR-QUIZ-06）以 `scopeType: "knowledge_tag"` 表達。
 
 ### 答案揭露規則（重要）
 
@@ -388,49 +387,72 @@ fallback「無法判定」**不可停用** —— 沒有它，AI 判斷不出錯
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
-| `POST` | `/ai/questions/:id/analyze` | 啟動單題分析，回 `{ jobId, status, reused }` |
-| `GET` | `/ai/jobs/:id` | **進度輪詢端點** |
-| `GET` | `/ai/jobs` | 任務列表（可篩 `status`） |
-| `POST` | `/ai/jobs/:id/cancel` | |
-| `POST` | `/ai/jobs/:id/retry` | 重跑失敗任務 |
-| `GET` | `/questions/:id/enrichment` | 題目層級通用解析 |
-| `GET` | `/questions/:id/analysis?userAnswerId=` | 個人化錯因分析 |
-| `POST` | `/ai/aggregate-analyses` | 啟動多題整合分析 |
-| `GET` | `/ai/aggregate-analyses/:id` | |
-| `GET` | `/ai/usage` | 用量統計與明細 |
+| `POST` | `/ai/questions/:questionId/analyze` | 啟動單題分析，回 `202` 與 job 物件 |
+| `GET` | `/ai/jobs/:id` | **進度輪詢端點**（前端每 1.5 秒） |
+| `GET` | `/ai/jobs` | 任務列表（可篩 `status`、`questionId`） |
+| `POST` | `/ai/jobs/:id/cancel` | 取消排隊中或執行中的任務 |
+| `POST` | `/ai/jobs/:id/retry` | 重跑失敗或已取消的任務 |
+| `GET` | `/questions/:questionId/analysis?userAnswerId=` | 題目解析 + 個人化錯因 |
+| `GET` | `/ai/usage` | 用量統計 |
+| `POST` | `/ai/aggregate-analyses` | 多題整合分析（**Phase 5**） |
 
-`POST /ai/questions/:id/analyze` 請求：
+### 為什麼是非同步
+
+規劃階段實測：模型延遲 4～8 秒，伺服器自報排隊 41 筆。三階段串起來同步等待必然逾時。
+因此 `analyze` 只回 job，前端輪詢進度（規格 §13）。
+
+`POST /ai/questions/:questionId/analyze` 請求：
+
 ```json
-{ "userAnswerId": "uuid", "force": false }
+{ "userAnswerId": "uuid 或 null", "force": false, "priority": 2 }
 ```
 
-回應：
-```json
-{ "jobId": "uuid", "status": "pending", "reused": false }
-```
+回應 `202`：
 
-- `reused: true` 表示命中快取，未實際呼叫模型。
-- 相同 `idempotencyKey` 的任務已在執行中時，回傳既有 `jobId`（不重複建立）。
-
-`GET /ai/jobs/:id` 回應：
 ```json
 {
-  "id": "uuid",
-  "status": "active",
-  "progressStep": "SEARCHING_SOURCES",
-  "progressPct": 40,
-  "attempts": 1,
-  "errorCode": null,
-  "resultRef": null,
-  "startedAt": "2026-07-30T14:31:00.000Z"
+  "id": "uuid", "status": "pending", "progressStep": "QUEUED", "progressPct": 0,
+  "questionId": "uuid", "servedFromCache": false, "attempts": 0, "maxAttempts": 3
 }
 ```
 
-前端以 1.5 秒間隔輪詢，`status` 進入 `completed` / `failed` / `cancelled` 即停止。
+- **冪等**：冪等鍵含題目內容雜湊、模型與 prompt 版本。內容沒變時重複呼叫回到**同一個 job**，
+  不會排出第二個一模一樣的分析。同一把鍵同時是 BullMQ 的 jobId，資料庫唯一約束與佇列去重雙重保證（規格 §14）。
+- `force: true` 忽略快取強制重新分析。
+- `servedFromCache: true` 代表該次任務直接沿用既有解析，**完全沒有呼叫模型**。
 
----
+### 進度步驟
 
-## 10. 答案衝突
+`GET /ai/jobs/:id` 的 `progressStep` 與百分比由前後端共用的 `AI_PROGRESS_STEPS` 定義：
+
+| 步驟 | % | 說明 |
+|---|---|---|
+| `QUEUED` | 0 | 排隊中 |
+| `ANALYZING_QUESTION` | 10 | AI① 規劃查證方向 |
+| `SEARCHING_SOURCES` | 35 | **程式**執行搜尋與擷取（無 AI） |
+| `SYNTHESIZING_EVIDENCE` | 60 | AI② 整理證據 |
+| `GENERATING_EXPLANATION` | 85 | AI③ 產生解析 |
+| `SAVING_RESULT` | 95 | 驗證引用、處理標籤、保存 |
+| `COMPLETED` | 100 | 完成 |
+
+**一次分析剛好 3 次模型呼叫**（規格 §9 上限）。
+
+### 快取失效判準（規格 §12）
+
+下列任一條件成立才重新研究，全部不成立就直接沿用既有結果、不呼叫模型：
+
+題目 `content_hash` 變更／prompt 版本變更／模型變更／證據過期／`force=true`。
+
+`GET /questions/:id/analysis` 的 `isStale` 為 true 代表題目在產生解析之後被改過。
+
+### 引用與來源
+
+`sources[]` 由**程式**指派 `sourceId`（S1、S2…），模型只能引用這些 ID。
+儲存前驗證 `citations ⊆ sourceIds`，不符者剔除並強制 `requiresHumanReview`。
+`isUsed` 標記該來源是否真的被引用。來源依可信度排序：
+`official` > `academic` > `educational` > `reference` > `other`。
+
+### 答案衝突
 
 | 方法 | 路徑 |
 |---|---|
@@ -438,23 +460,31 @@ fallback「無法判定」**不可停用** —— 沒有它，AI 判斷不出錯
 | `GET` | `/answer-conflicts/:id` |
 | `POST` | `/answer-conflicts/:id/resolve` |
 
-`resolve` 請求：
+**AI 永遠不會自己改答案**（規格 §10）。它質疑題庫答案時只能建立一筆待審爭議，
+連鎖效果為：`questions.status = 'disputed'` → 該題新的作答 `is_provisional = true`
+→ 統計查詢排除 → 直接滿足驗收標準 #18。
+
+裁決請求：
+
 ```json
-{
-  "decision": "answer_updated",
-  "newCorrectAnswers": ["C"],
-  "newExplanation": "...",
-  "note": "查證後確認題庫答案有誤"
-}
+{ "decision": "answer_updated", "correctAnswers": ["B"], "reviewNote": "查過條文" }
 ```
 
-`decision` 可為 `kept_original`／`answer_updated`／`explanation_updated`／`marked_disputed`／`question_excluded`。
+五種決策：
 
-> **系統永遠不會自動執行這個動作。** 沒有人工裁決前，題目維持 `disputed`，相關作答維持 `is_provisional = true`。
+| decision | 效果 |
+|---|---|
+| `kept_original` | 維持原答案，題目回到 `active`，暫記作答重新計入統計 |
+| `answer_updated` | **修改題庫答案**（唯一會改動答案的路徑，且新答案必須由人指定）；會遞增題目版本並寫入版本快照，既有 AI 解析因 `content_hash` 改變而自動失效 |
+| `explanation_updated` | 只更新解析，答案不動 |
+| `marked_disputed` | 確認有爭議，題目維持 `disputed`，**繼續排除於統計之外** |
+| `question_excluded` | 題目轉 `excluded`，不再出現在作答中 |
+
+同一題在待審期間只會有一筆爭議（部分唯一索引保證）。
 
 ---
 
-## 11. 統計與設定
+## 10. 統計與設定
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|

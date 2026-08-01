@@ -78,7 +78,7 @@
 | FR-QUIZ-11 | `after_submit` 模式在交卷前，API 回應中不得包含任何正確答案資訊。 | P2 |
 | FR-QUIZ-12 | 作答紀錄保存：`quizSessionId`、`questionId`、`selectedAnswers`、`correctAnswersSnapshot`、`isCorrect`、`responseTimeMs`、`attemptNumber`、`answeredAt`、`answerChangedCount`、`revealMode`。 | P2 |
 | FR-QUIZ-13 | 題目日後被修改時，歷史紀錄仍保有當時的答案快照與題目版本號。 | P2 |
-| FR-QUIZ-14 | 爭議題（`answer_conflicts` 待審）的作答標記 `is_provisional`，不計入正式能力診斷。 | P4 |
+| FR-QUIZ-14 ✅ | 爭議題（`answer_conflicts` 待審）的作答標記 `is_provisional`，不計入正式能力診斷。 | P4 |
 
 ## 6. 錯題系統
 
@@ -203,12 +203,12 @@
 | 10 ✅ | 可重新練習錯題 | FR-MIS-04 | P2 | E2E |
 | 11 ✅ | 可管理受控知識點與錯誤類型 | FR-TAG-01～09 | P3 | 整合 + E2E |
 | 12 ✅ | AI 不會未經審核建立正式標籤 | FR-TAG-06～07 | P3 | 整合測試 |
-| 13 | 可啟動單題三階段 AI 分析 | FR-AI-01～03 | P4 | 整合 + E2E |
-| 14 | 可顯示 AI 工作進度 | FR-JOB-03～04 | P4 | E2E |
-| 15 | 可保存搜尋來源與引用 | FR-AI-06 | P4 | 整合測試 |
-| 16 | AI 引用只指向實際存在來源 | FR-AI-07 | P4 | 單元 + 整合 |
-| 17 | 答案衝突建立待審核紀錄 | FR-CONF-01～02 | P4 | 整合測試 |
-| 18 | 爭議題不影響能力診斷 | FR-QUIZ-14、FR-CONF-04 | P4 | 整合測試 |
+| 13 ✅ | 可啟動單題三階段 AI 分析 | FR-AI-01～03 | P4 | 整合 + E2E |
+| 14 ✅ | 可顯示 AI 工作進度 | FR-JOB-03～04 | P4 | E2E |
+| 15 ✅ | 可保存搜尋來源與引用 | FR-AI-06 | P4 | 整合測試 |
+| 16 ✅ | AI 引用只指向實際存在來源 | FR-AI-07 | P4 | 單元 + 整合 |
+| 17 ✅ | 答案衝突建立待審核紀錄 | FR-CONF-01～02 | P4 | 整合測試 |
+| 18 ✅ | 爭議題不影響能力診斷 | FR-QUIZ-14、FR-CONF-04 | P4 | 整合測試 |
 | 19 | 可產生多題整合分析 | FR-AGG-01～05 | P5 | 整合 + E2E |
 | 20 ✅ | Redis、PostgreSQL、NestJS、Next.js 可依文件完整啟動 | — | P0 | README 手動驗證 |
 | 21 | lint、typecheck、test、build 全部通過 | — | 每階段 | `pnpm verify` |

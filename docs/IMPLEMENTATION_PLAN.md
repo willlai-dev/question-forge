@@ -201,11 +201,44 @@
 
 ---
 
-## Phase 4：AI 與搜尋
+## Phase 4：AI 與搜尋 ✅ 已完成
 
 **目標**：三階段單題分析可端到端運作。
 
-**這是風險最高的階段**，建議依下列子步驟推進，每步都能獨立驗證：
+| 項目 | 內容 |
+|---|---|
+| 資料庫 | 9 張表（`prompt_versions`、`ai_jobs`、`ai_usage_logs`、`web_documents`、`question_evidence_sets`、`question_evidence_sources`、`question_ai_enrichments`、`personalized_mistake_analyses`、`answer_conflicts`），migration `0003_phase4_ai_analysis.sql` |
+| 基礎設施 | Redis Lua 原子限流（30 RPM + 8 保留給重試）、行程內併發上限 2、BullMQ 佇列與 in-process worker |
+| Provider | `AiProvider` / `SearchProvider` 介面，各有 Mock 與真實實作，由環境變數選擇 |
+| Gateway | 唯一的 AI 呼叫入口：限流、分類重試、四層驗證、用量記錄 |
+| 搜尋層 | Tavily search + extract、URL 去重、可信度排序、正文截斷、`web_documents` 跨題快取、SSRF 防護 |
+| 三階段 | 規劃 → 程式搜尋 → 證據整理 → 最終解析 → 保存，一次分析**剛好 3 次模型呼叫** |
+| 爭議 | `answer_conflicts` + 題目轉 `disputed` + 作答標 `is_provisional` + 五種人工裁決 |
+| 前端 | 錯題詳情頁的 AI 解析區塊（含進度輪詢）、`/conflicts`、`/ai/jobs`、`/ai/usage` |
+| 測試 | 90 個單元測試（語意驗證 30、快取鍵 22、SSRF 38）＋ 63 項 API 端到端驗證 |
+
+實測確認的關鍵行為：
+
+- 一次分析**剛好 3 次模型呼叫**，超過即代表流程有誤
+- **重複分析完全不呼叫模型**；題目改過後 `isStale` 轉 true 且會產生新任務
+- 來源依可信度排序，官方（`law.moj.gov.tw`）排在學術與參考之前
+- **`169.254.169.254` 這類內部位址不會進入證據集合**（SSRF 過濾實際生效）
+- 所有引用都指向實際存在的 `sourceId`
+- **AI 提出的新標籤只會進入待審佇列**，審核前該名稱解析不到任何正式標籤
+- AI 質疑答案時建立待審爭議、題目轉 `disputed`，但**題庫答案完全沒有被改動**
+- 爭議題的作答不計入統計、不進錯題本；裁決後原本的作答重新計入
+- 用量記錄涵蓋三個階段的呼叫次數、token、延遲與結果分布
+
+### 與原規劃的差異
+
+| 項目 | 原規劃 | 實際 | 理由 |
+|---|---|---|---|
+| 併發上限 | 未指定實作位置 | **行程內號誌**，不用 Redis | worker 與 API 同進程，跨行程協調沒有對象；限流仍在 Redis（要跨重啟存活） |
+| Mock provider | 僅供測試 | **正式的 provider 實作** | 走與真實 provider 完全相同的 Gateway 與保存路徑，端到端測試因此有意義 |
+| Mock 的爭議路徑 | 未規劃 | **題幹含標記時模擬「答案有誤」** | 否則驗收 #17、#18 只能靠讀程式碼相信它會動 |
+| `aggregate_analysis` | 列於 Phase 4 的 prompt seed | **prompt 已 seed，流程屬 Phase 5** | 多題分析本就是 Phase 5 的範圍 |
+
+### 子步驟（實際依此推進）
 
 ### 4a. 基礎設施
 - Redis 連線與 Lua 限流腳本
@@ -241,14 +274,11 @@
 - `/analysis/questions/[questionId]`（含進度輪詢）
 - `/conflicts`、`/ai/jobs`
 
-### 測試
-
-- 單元：AI schema 驗證全部案例（含實測踩過的語意矛盾）、cache key、限流器
-- 整合：三階段完整流程（mock）、重複分析命中快取、題目變更後快取失效、未知 sourceId 被剔除、未知標籤進建議、爭議題不計入統計
-- E2E：啟動分析 → 觀察進度 → 查看結果與引用
-
 ### 驗收對照
-規格 §22 之 12、13、14、15、16、17、18
+規格 §22 之 12、13、14、15、16、17、18 —— 全數達成。
+
+> **端到端測試必須以 Mock provider 執行**（`AI_PROVIDER=mock SEARCH_PROVIDER=mock`）。
+> 真實模型的輸出不可重現，且每跑一次測試就消耗一次免費額度。
 
 ---
 
@@ -285,8 +315,8 @@
 | 1 ✅ | 題庫核心 | 13 | 匯入驗證規則繁多，需逐條測試 |
 | 2 ✅ | 作答與錯題 | 5 | 答案洩漏；選項映射錯誤 |
 | 3 ✅ | 標籤系統 | 8（含由 Phase 2 移入的 `mistake_record_error_types`） | 合併時的關聯轉移與 primary 衝突 |
-| 4 | AI 與搜尋 | 8 | **最高**：外部相依、延遲、額度、輸出品質 |
-| 5 | 多題分析與管理 | 2 | 統計查詢效能與正確性 |
+| 4 ✅ | AI 與搜尋 | 9 | **最高**：外部相依、延遲、額度、輸出品質 |
+| 5 | 多題分析與管理 | 1（`aggregate_analyses`） | 統計查詢效能與正確性 |
 
 ---
 

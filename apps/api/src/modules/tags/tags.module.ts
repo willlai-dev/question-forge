@@ -42,6 +42,8 @@ import { VocabularyService } from './vocabulary.service';
     MistakeErrorTypesService,
     TagSeedService,
   ],
-  exports: [QuestionTagsService, TagSeedService],
+  // TagAliasesService 供 AI 模組把模型回傳的標籤名稱解析成既有標籤 ——
+  // 那是 AI 唯一能碰到標籤系統的合法路徑。
+  exports: [QuestionTagsService, TagSeedService, TagAliasesService],
 })
 export class TagsModule {}

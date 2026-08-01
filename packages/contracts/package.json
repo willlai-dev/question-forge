@@ -5,10 +5,20 @@
   "description": "前後端共用的 Zod 契約：環境變數、統一錯誤格式、API DTO、匯入格式、AI 輸入輸出",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist", "server.js", "server.d.ts"],
+  "files": [
+    "dist",
+    "server.js",
+    "server.d.ts"
+  ],
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-    "./server": { "types": "./dist/server.d.ts", "default": "./dist/server.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -17,7 +27,8 @@
     "clean": "node -e \"const fs=require('node:fs');for(const p of ['dist','tsconfig.tsbuildinfo'])fs.rmSync(p,{recursive:true,force:true})\""
   },
   "dependencies": {
-    "zod": "^3.24.1"
+    "zod": "^3.24.1",
+    "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
     "typescript": "^5.7.2"

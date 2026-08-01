@@ -22,6 +22,13 @@
       "when": 1785519701474,
       "tag": "0002_phase3_controlled_tags",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785522648920,
+      "tag": "0003_phase4_ai_analysis",
+      "breakpoints": true
     }
   ]
 }

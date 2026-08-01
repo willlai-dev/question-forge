@@ -253,9 +253,23 @@ pnpm build
 node scripts/create-test-db.mjs
 node scripts/create-test-db.mjs --drop
 
-# API 端到端驗證（Phase 1 起；需先啟動後端）
+# API 端到端驗證（Phase 1 起；需先啟動後端與 Redis）
 pnpm test:api-e2e                                   # 打預設的 :4000
 BASE=http://localhost:4101/api/v1 pnpm test:api-e2e # 打測試資料庫上的實例
+```
+
+完整流程（Phase 4 起後端必須以 Mock provider 啟動）：
+
+```bash
+pnpm redis:up
+node scripts/create-test-db.mjs --drop
+cd packages/db && DATABASE_URL=<測試連線字串> npx drizzle-kit migrate && cd ..
+
+# 先重置資料庫，再啟動後端 —— 種子資料是啟動時寫入的，順序反了會缺種子
+DATABASE_URL=<測試連線字串> PORT=4101 AI_PROVIDER=mock SEARCH_PROVIDER=mock \
+  node apps/api/dist/main.js
+
+BASE=http://localhost:4101/api/v1 pnpm test:api-e2e
 ```
 
 > 端到端驗證建議打在**測試資料庫**上，而不是平常使用的資料庫 ——
@@ -349,3 +363,48 @@ Phase 0 只交付架構與契約，尚無業務邏輯，因此沒有業務測試
 
 腳本連續執行兩次皆為 76 通過 0 失敗。所有斷言都以「本次執行建立的資料」或「增量」為基準，
 不使用全域絕對數字 —— 否則腳本會因為資料庫殘留而失敗，那是測試的問題不是系統的問題。
+
+---
+
+## 10. Phase 4 的測試現況
+
+| 類別 | 內容 | 數量 |
+|---|---|---|
+| 單元 | AI 輸出語意驗證（§2.8） | 30 |
+| 單元 | 快取鍵與 URL 正規化（§2.9） | 22 |
+| 單元 | SSRF 防護 | 38 |
+| API E2E | `tests/api-e2e/phase4.mjs` | 63 |
+
+### 為什麼一定要用 Mock provider
+
+端到端測試必須以 `AI_PROVIDER=mock SEARCH_PROVIDER=mock` 執行，理由有二：
+
+1. **真實模型的輸出不可重現。** 同樣的輸入不保證得到同樣的結果，
+   斷言「解析內容包含某段文字」的測試會時好時壞，那比沒有測試更糟。
+2. **每跑一次就消耗一次免費額度。** 開發過程中會跑上百次。
+
+Mock 是**正式的 provider 實作**，不是測試替身的臨時 hack：
+它走的是與真實 provider 完全相同的 Gateway、四層驗證、標籤解析與保存路徑，
+被替換掉的只有最外層那一次 HTTP 呼叫。因此端到端測試涵蓋的是真正的業務流程。
+
+Mock 刻意內建兩個「會出事」的情境，讓防護機制每次都被實際走過：
+
+- 搜尋結果中固定含一筆 `169.254.169.254`（雲端 metadata 位址）——
+  測試斷言它**不會**出現在證據集合中。
+- 題幹含 `【衝突測試】` 時回報「題庫答案有誤」——
+  走完整的爭議建立、題目轉 `disputed`、作答標 `is_provisional`、人工裁決流程。
+
+### 重點驗證
+
+- **一次分析剛好 3 次模型呼叫**：多了代表流程有誤，少了代表某一階段沒跑。
+- **重複分析完全不呼叫模型**：以用量計數的差值斷言，不是看回應內容。
+- **引用都指向實際存在的 sourceId**：對照證據集合逐筆比對。
+- **AI 建議的標籤審核前解析不到正式標籤**：以行為證明驗收 #12。
+- **爭議題的作答不計入統計、不進錯題本**：以 `/stats/overview` 的差值斷言；
+  裁決後再斷言原本的作答重新計入。
+- **AI 沒有改動題庫答案**：爭議建立後直接讀題目選項，確認 `isCorrect` 沒變。
+
+腳本連續執行兩次皆為 63 通過 0 失敗。
+
+> **重置測試資料庫之後必須重新啟動後端**：能力類型、錯誤類型與 prompt 版本
+> 都是啟動時寫入的種子資料，先重置再跑測試會因為缺少種子而失敗。

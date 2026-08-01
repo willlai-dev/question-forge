@@ -8,11 +8,12 @@
 - AI 三階段深度解析（含網路查證與來源引用）
 - 多題整合的弱點診斷
 
-> **目前狀態：Phase 3 已完成**——可建立帳號、管理題庫階層、手動建題或以外部 AI 整理的
-> JSON 匯入整份題庫，可以**實際刷題**（選範圍出題、程式判分、即答或交卷後對答案、
-> 答錯自動進錯題本並追蹤熟練狀態），並且可以**用受控標籤組織題庫**：
-> 建立知識點、登錄別名、合併重複標籤、只作答特定知識點、依知識點與錯誤類型篩選錯題。
-> AI 解析屬 Phase 4。詳見 [實作計畫](./docs/IMPLEMENTATION_PLAN.md)。
+> **目前狀態：Phase 4 已完成**——可建立帳號、管理題庫階層、匯入題庫、**實際刷題**
+> （程式判分、錯題本、熟練狀態）、**用受控標籤組織題庫**，並且可以對錯題按下
+> **AI 深度解析**：三階段查證（規劃 → 搜尋外部資料 → 產生解析），
+> 每個選項為何對錯、你可能為什麼選錯、附上實際查到的來源連結。
+> AI 認為題庫答案有誤時會建立待審爭議，**絕不自行修改答案**。
+> 剩下 Phase 5（多題整合的弱點診斷）。詳見 [實作計畫](./docs/IMPLEMENTATION_PLAN.md)。
 
 ### 主要頁面
 
@@ -24,6 +25,8 @@
 | `/mistakes` | 錯題本，可依科目、知識點、錯誤類型與熟練狀態篩選並一鍵重練 |
 | `/tags` | 標籤管理：知識點、能力類型、錯誤類型、別名 |
 | `/tags/suggestions` | 標籤建議審核（AI 只能建議，不能自己建立標籤） |
+| `/conflicts` | 答案爭議裁決（AI 質疑題庫答案時出現） |
+| `/ai/jobs`、`/ai/usage` | AI 任務進度與用量統計 |
 | `/subjects`、`/question-groups`、`/questions` | 題庫維護 |
 | `/imports` | JSON 匯入（含逐題驗證與預覽修正） |
 
@@ -113,10 +116,13 @@ pnpm lint
 pnpm test                # 單元測試
 pnpm build
 
-# API 端到端驗證（需先啟動後端；預設打 :4000，可用 BASE 覆寫）
-# 會實際建立科目、題目與作答紀錄，建議打在測試資料庫上：
-#   node scripts/create-test-db.mjs
-#   DATABASE_URL=<...把資料庫名稱換成 <db>_test> PORT=4101 node apps/api/dist/main.js
+# API 端到端驗證（需先啟動 Redis 與後端；預設打 :4000，可用 BASE 覆寫）
+# 會實際建立科目、題目與作答紀錄，建議打在測試資料庫上。
+# Phase 4 起後端必須以 Mock provider 啟動，否則測試會消耗 AI 額度且結果不可重現：
+#   node scripts/create-test-db.mjs --drop
+#   DATABASE_URL=<...把資料庫名稱換成 <db>_test> PORT=4101 \
+#     AI_PROVIDER=mock SEARCH_PROVIDER=mock node apps/api/dist/main.js
+# 注意順序：先重置資料庫再啟動後端，種子資料是啟動時寫入的。
 pnpm test:api-e2e
 BASE=http://localhost:4101/api/v1 pnpm test:api-e2e
 

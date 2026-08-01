@@ -585,6 +585,9 @@ export class QuizSessionsService {
             revealMode: session.revealMode,
             questionVersion: target.sessionQuestion.questionVersion,
             answeredAt: now,
+            // 爭議題待審期間的作答只是暫記，不計入能力診斷（FR-QUIZ-14、驗收 #18）。
+            // 統計查詢從 Phase 2 起就已經在過濾這個欄位，這裡只負責把值設對。
+            isProvisional: target.questionStatus === 'disputed',
           })
           .returning({ id: schema.userAnswers.id });
         id = inserted[0]!.id;
@@ -831,12 +834,14 @@ export class QuizSessionsService {
     sessionQuestion: typeof schema.quizSessionQuestions.$inferSelect;
     type: 'single_choice' | 'multiple_choice';
     explanation: string | null;
+    questionStatus: string;
   }> {
     const rows = await this.database.db
       .select({
         sessionQuestion: schema.quizSessionQuestions,
         type: schema.questions.type,
         explanation: schema.questions.explanation,
+        questionStatus: schema.questions.status,
       })
       .from(schema.quizSessionQuestions)
       .innerJoin(schema.questions, eq(schema.questions.id, schema.quizSessionQuestions.questionId))

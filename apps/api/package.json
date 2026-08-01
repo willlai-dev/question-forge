@@ -21,6 +21,7 @@
     "@node-rs/argon2": "^2.0.2",
     "@repo/contracts": "workspace:*",
     "@repo/db": "workspace:*",
+    "bullmq": "^6.0.2",
     "cookie-parser": "^1.4.7",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.38.4",

@@ -16,6 +16,8 @@ const NAV = [
   { href: '/question-groups', label: '題組' },
   { href: '/questions', label: '題目' },
   { href: '/tags', label: '標籤' },
+  { href: '/conflicts', label: '答案爭議' },
+  { href: '/ai/jobs', label: 'AI 任務' },
   { href: '/imports', label: 'JSON 匯入' },
 ];
 

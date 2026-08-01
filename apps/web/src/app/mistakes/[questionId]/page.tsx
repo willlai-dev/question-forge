@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
+import { AiAnalysisPanel } from '@/components/ai-analysis-panel';
 import { AppShell } from '@/components/app-shell';
 import { Button, Card, ErrorBanner } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
@@ -180,6 +181,11 @@ function MistakeDetailView() {
           )}
         </div>
       </Card>
+
+      <AiAnalysisPanel
+        questionId={params.questionId}
+        userAnswerId={data.attempts.find((a) => !a.isCorrect)?.answerId ?? null}
+      />
 
       <div className="space-y-3">
         <h2 className="font-medium">歷次作答</h2>

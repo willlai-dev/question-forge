@@ -11,3 +11,4 @@ export * from './question-bank';
 export * from './import';
 export * from './tags';
 export * from './quiz';
+export * from './ai';

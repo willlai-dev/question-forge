@@ -13,6 +13,7 @@ import { QuestionsModule } from './modules/questions/questions.module';
 import { QuizModule } from './modules/quiz/quiz.module';
 import { StatsModule } from './modules/stats/stats.module';
 import { TagsModule } from './modules/tags/tags.module';
+import { AiModule } from './modules/ai/ai.module';
 
 /**
  * 應用程式根模組（模組化單體）。
@@ -34,6 +35,7 @@ import { TagsModule } from './modules/tags/tags.module';
     TagsModule,
     QuizModule,
     StatsModule,
+    AiModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: AppZodValidationPipe },
