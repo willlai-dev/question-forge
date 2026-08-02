@@ -254,9 +254,29 @@ node scripts/create-test-db.mjs
 node scripts/create-test-db.mjs --drop
 
 # API 端到端驗證（Phase 1 起；需先啟動後端與 Redis）
-pnpm test:api-e2e                                   # 打預設的 :4000
-BASE=http://localhost:4101/api/v1 pnpm test:api-e2e # 打測試資料庫上的實例
+# 預設打 :4101 的測試後端，不會誤打 pnpm dev 的 :4000 而污染正式題庫。
+pnpm test:api-e2e
+BASE=http://localhost:4000/api/v1 pnpm test:api-e2e # 要改目標才需要設 BASE
 ```
+
+### 端到端腳本必須可以連續跑兩次
+
+跑完一次就通過，只證明它在乾淨資料庫上會過；**第二次連續執行也必須通過**，
+否則這套腳本只是一次性的煙霧測試，日後重跑會出現一堆與程式無關的假失敗，
+真正的迴歸反而會被淹沒在雜訊裡。
+
+因此腳本裡任何「使用者範圍內唯一」的值都要帶上本次執行的戳記：
+科目名稱、題組名稱、標籤名稱，以及 **`externalId`（全域唯一，最容易被忽略）**。
+斷言也一律用「相對」而非「絕對」的量：
+
+| 不要這樣寫 | 要這樣寫 |
+|---|---|
+| `pagination.total === 2` | 先用 `subjectId` 限定範圍再比數量 |
+| `list[0].name === '民法'` | 比較兩者的相對順序（`indexOf(a) < indexOf(b)`） |
+| `stats.answeredCount === 5` | 先取基準值，再比 `基準 + 1` |
+
+新增測試段落若動到統計，記得把後面既有斷言的基準值一起重新取，
+不然會把「自己插進來的副作用」誤判成程式壞掉。
 
 完整流程（Phase 4 起後端必須以 Mock provider 啟動）：
 

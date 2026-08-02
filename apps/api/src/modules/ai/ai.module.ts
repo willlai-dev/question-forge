@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import type { Env } from '@repo/contracts';
 
 import { ENV } from '../../config/env.config';
+import { QuizModule } from '../quiz/quiz.module';
 import { TagsModule } from '../tags/tags.module';
 import { AiController, AnswerConflictsController, QuestionAnalysisController } from './ai.controller';
 import { AiGatewayService } from './ai-gateway.service';
@@ -29,7 +30,9 @@ import { TavilySearchProvider } from './search/tavily-search.provider';
  * 兩個 Mock 都是正式的 provider 實作，不是測試替身的臨時 hack。
  */
 @Module({
-  imports: [TagsModule],
+  // QuizModule 只為了取得 MistakeRecordsService：建立與裁決答案爭議都會改變
+  // 「哪些作答算數」，錯題紀錄必須跟著重算。QuizModule 不反向依賴 AiModule，無循環。
+  imports: [TagsModule, QuizModule],
   controllers: [AiController, QuestionAnalysisController, AnswerConflictsController],
   providers: [
     MockAiProvider,

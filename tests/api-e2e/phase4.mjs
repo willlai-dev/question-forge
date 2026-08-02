@@ -8,7 +8,9 @@
  *
  * 需先啟動後端與 Redis；預設打 :4000，可用 BASE 覆寫。
  */
-const BASE = process.env.BASE ?? 'http://localhost:4000/api/v1';
+// 預設打測試後端（:4101）而非開發後端（:4000）：這些腳本會實際建立科目、
+// 題目與作答紀錄，誤打到正式資料庫會污染真實題庫。要換目標請設 BASE。
+const BASE = process.env.BASE ?? 'http://localhost:4101/api/v1';
 
 const jar = new Map();
 let pass = 0;
@@ -308,7 +310,84 @@ const run = async () => {
   check('**爭議題答錯不會進入錯題本**', mistakeAfter.status === 404,
     `status=${mistakeAfter.status}`);
 
+  // 上面那段是「先有爭議、才作答」的順序，那是簡單情況：作答寫入時題目已是
+  // disputed，is_provisional 當場就是 true。真實使用順序剛好相反 ——
+  // 先答錯 → 進錯題本 → 在錯題頁按「AI 分析」→ 才產生爭議。
+  // 觸發分析的那一筆作答必然早於 disputed，若不回頭補標，最該排除的那筆反而留在診斷裡。
+  console.log('\n=== 爭議「之前」就存在的作答也必須退出診斷（驗收 #18）===');
+  const preGroup = await call('POST', '/question-groups',
+    { subjectId: subject.body.id, name: `爭議前作答-${stamp}` }, H());
+  const preQ = (await call('POST', '/questions', {
+    questionGroupId: preGroup.body.id,
+    questionNumber: 1,
+    type: 'single_choice',
+    stem: '第 4 題【衝突測試】：下列何者屬於行政處分？',
+    options: [
+      { key: 'A', text: '拆除命令', isCorrect: true },
+      { key: 'B', text: '行政指導', isCorrect: false },
+      { key: 'C', text: '行政計畫', isCorrect: false },
+    ],
+    explanation: null,
+    reviewRequired: false,
+  }, H())).body;
+
+  // 1) 先答錯（此時題目還是 active，作答正常計入）
+  const preSession = await call('POST', '/quiz-sessions',
+    { scopes: [{ scopeType: 'question_group', refId: preGroup.body.id }], questionLimit: 5 }, H());
+  const preQuestion = await call('GET', `/quiz-sessions/${preSession.body.id}/questions/1`);
+  await call('POST', `/quiz-sessions/${preSession.body.id}/answers`,
+    { sessionQuestionId: preQuestion.body.sessionQuestionId, selectedAnswers: ['B'] }, H());
+
+  const statsPre = (await call('GET', '/stats/overview')).body;
+  const mistakePre = await call('GET', `/mistakes/${preQ.id}`);
+  check('分析前：答錯已計入統計且進了錯題本', mistakePre.status === 200,
+    `status=${mistakePre.status}`);
+
+  // 2) 現在才做 AI 分析 → 產生爭議
+  const preJob = await call('POST', `/ai/questions/${preQ.id}/analyze`, { force: false }, H());
+  const preDone = await waitForJob(preJob.body.id);
+  check('爭議題（先作答後分析）分析完成', preDone.status === 'completed',
+    `status=${preDone.status}`);
+
+  const statsPost = (await call('GET', '/stats/overview')).body;
+  check('**爭議建立後，先前那筆作答一併退出統計**',
+    statsPost.answeredCount === statsPre.answeredCount - 1,
+    `${statsPre.answeredCount} → ${statsPost.answeredCount}`);
+  check('**爭議建立後，先前那筆錯題一併退出錯題本**',
+    (await call('GET', `/mistakes/${preQ.id}`)).status === 404);
+
+  const preConflict = (await call('GET', '/answer-conflicts?reviewStatus=pending&pageSize=50'))
+    .body.items.find((c) => c.questionId === preQ.id);
+  check('這題確實有待審爭議', preConflict !== undefined);
+
+  // 3) 裁決為「修改答案」，把正確答案改成使用者當初選的 B
+  console.log('\n=== 改答案後必須重新判分（規格 §六：判分一律由程式執行）===');
+  const updated = await call('POST', `/answer-conflicts/${preConflict.id}/resolve`,
+    { decision: 'answer_updated', correctAnswers: ['B'], reviewNote: '查證後題庫答案有誤' }, H());
+  check('裁決為修改答案', updated.status === 200 && updated.body.reviewStatus === 'answer_updated',
+    `status=${updated.status}`);
+
+  const fixedQuestion = await call('GET', `/questions/${preQ.id}`);
+  check('題庫正確答案已改為 B',
+    JSON.stringify(fixedQuestion.body.options.filter((o) => o.isCorrect).map((o) => o.key)) === '["B"]',
+    JSON.stringify(fixedQuestion.body.options.filter((o) => o.isCorrect).map((o) => o.key)));
+  check('題目恢復為 active', fixedQuestion.body.status === 'active', fixedQuestion.body.status);
+
+  const statsRegraded = (await call('GET', '/stats/overview')).body;
+  check('改答案後作答恢復計入統計',
+    statsRegraded.answeredCount === statsPre.answeredCount,
+    `${statsPre.answeredCount} → ${statsRegraded.answeredCount}`);
+  // 使用者當初選 B、被判錯；答案改成 B 之後，那一筆必須重新判為答對，
+  // 否則等於用「新答案」的名義把「舊答案的判定」放回統計。
+  check('**改答案後原本的作答重新判分為答對**',
+    statsRegraded.correctCount === statsPre.correctCount + 1,
+    `correct ${statsPre.correctCount} → ${statsRegraded.correctCount}`);
+  check('**重新判分後這題不再是錯題**',
+    (await call('GET', `/mistakes/${preQ.id}`)).status === 404);
+
   console.log('\n=== 人工裁決（規格 §10）===');
+  // 重新取基準：上面那段也動到了統計，不能再拿 statsBefore 當比較點。
+  const statsBeforeResolve = (await call('GET', '/stats/overview')).body;
   const badResolve = await call('POST', `/answer-conflicts/${conflict.id}/resolve`,
     { decision: 'answer_updated' }, H());
   check('選擇修改答案卻沒指定新答案 → 400', badResolve.status === 400, `status=${badResolve.status}`);
@@ -324,8 +403,8 @@ const run = async () => {
 
   const statsResolved = (await call('GET', '/stats/overview')).body;
   check('**爭議解除後原本的作答重新計入統計**',
-    statsResolved.answeredCount === statsBefore.answeredCount + 1,
-    `${statsBefore.answeredCount} → ${statsResolved.answeredCount}`);
+    statsResolved.answeredCount === statsBeforeResolve.answeredCount + 1,
+    `${statsBeforeResolve.answeredCount} → ${statsResolved.answeredCount}`);
 
   const reResolve = await call('POST', `/answer-conflicts/${conflict.id}/resolve`,
     { decision: 'kept_original' }, H());

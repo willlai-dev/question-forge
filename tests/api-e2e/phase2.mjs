@@ -9,7 +9,9 @@
  *      而不是只檢查已知欄位，否則日後新增欄位就會漏測（FR-QUIZ-11）。
  *   2. 修改答案後錯題紀錄不得重複累加 —— 錯題紀錄是作答歷史的衍生狀態。
  */
-const BASE = process.env.BASE ?? 'http://localhost:4000/api/v1';
+// 預設打測試後端（:4101）而非開發後端（:4000）：這些腳本會實際建立科目、
+// 題目與作答紀錄，誤打到正式資料庫會污染真實題庫。要換目標請設 BASE。
+const BASE = process.env.BASE ?? 'http://localhost:4101/api/v1';
 
 const jar = new Map();
 let pass = 0;

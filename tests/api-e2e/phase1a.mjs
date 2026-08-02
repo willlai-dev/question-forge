@@ -4,6 +4,11 @@
  */
 const BASE = process.env.BASE ?? 'http://localhost:4101/api/v1';
 
+// 名稱在使用者範圍內唯一，因此固定名稱會讓第二次執行撞上 409。
+// 加上每次執行的戳記，讓同一個資料庫可以重複跑。
+const stamp = Date.now().toString(36);
+const T = (name) => `${name}-${stamp}`;
+
 const jar = new Map();
 let pass = 0;
 let fail = 0;
@@ -88,12 +93,12 @@ const run = async () => {
   check('缺少 CSRF 標頭回 403', noCsrf.status === 403 && noCsrf.body.error.code === 'CSRF_TOKEN_INVALID');
 
   console.log('\n=== 中文編碼往返 ===');
-  const s1 = await call('POST', '/subjects', { name: '行政法', code: 'ADMIN', description: '中文描述測試' }, H());
+  const s1 = await call('POST', '/subjects', { name: T('行政法'), code: `ADMIN${stamp}`, description: '中文描述測試' }, H());
   check('建立中文名稱科目', s1.status === 201, JSON.stringify(s1.body));
-  check('name 往返正確（行政法）', s1.body?.name === '行政法', `實際: ${s1.body?.name}`);
+  check('name 往返正確（行政法）', s1.body?.name === T('行政法'), `實際: ${s1.body?.name}`);
   check('description 往返正確', s1.body?.description === '中文描述測試', `實際: ${s1.body?.description}`);
 
-  const s2 = await call('POST', '/subjects', { name: '民法' }, H());
+  const s2 = await call('POST', '/subjects', { name: T('民法') }, H());
   check('建立第二個科目', s2.status === 201);
 
   console.log('\n=== 階層約束 ===');
@@ -110,27 +115,34 @@ const run = async () => {
   const gNull = await call('POST', '/question-groups', { subjectId: s1.body.id, chapterId: null, name: '無章節題組' }, H());
   check('題組不指定章節 → 成功（章節可為空）', gNull.status === 201 && gNull.body.chapterId === null);
 
-  const dupSubject = await call('POST', '/subjects', { name: '行政法' }, H());
+  const dupSubject = await call('POST', '/subjects', { name: T('行政法') }, H());
   check('同名科目 → 409 CONFLICT', dupSubject.status === 409 && dupSubject.body.error.code === 'CONFLICT');
 
   console.log('\n=== 查詢與篩選 ===');
-  const listAll = await call('GET', '/question-groups?page=1&pageSize=20');
+  // 一律限定在本次執行建立的科目底下，否則第二次執行會被前一次的資料墊高。
+  const listAll = await call('GET', `/question-groups?subjectId=${s1.body.id}&page=1&pageSize=20`);
   check('題組列表含分頁', listAll.status === 200 && listAll.body.pagination.total === 2, JSON.stringify(listAll.body?.pagination));
 
-  const listNone = await call('GET', '/question-groups?chapterId=none');
+  const listNone = await call('GET', `/question-groups?subjectId=${s1.body.id}&chapterId=none`);
   check('chapterId=none 只回無章節題組',
     listNone.status === 200 && listNone.body.items.length === 1 && listNone.body.items[0].chapterId === null);
 
   const subjects = await call('GET', '/subjects');
-  const admin = subjects.body.find((s) => s.name === '行政法');
+  const admin = subjects.body.find((s) => s.name === T('行政法'));
   check('科目列表帶出章節數', admin?.chapterCount === 1, `chapterCount=${admin?.chapterCount}`);
   check('科目列表帶出題組數', admin?.questionGroupCount === 2, `questionGroupCount=${admin?.questionGroupCount}`);
 
   console.log('\n=== 排序 ===');
-  const before = subjects.body.map((s) => s.name);
+  // 斷言兩者的「相對」順序而非絕對位置，資料庫裡還有沒有別的科目都不影響。
+  const names = (list) => (list ?? []).map((s) => s.name);
+  const beforeNames = names(subjects.body);
+  const beforeIdx = beforeNames.indexOf(T('民法')) < beforeNames.indexOf(T('行政法'));
   const reordered = await call('POST', '/subjects/reorder', { orderedIds: [s2.body.id, s1.body.id] }, H());
   check('重新排序成功', reordered.status === 201 || reordered.status === 200, `status=${reordered.status}`);
-  check('順序已改變', reordered.body?.[0]?.name === '民法', `before=${before} after=${reordered.body?.map((s)=>s.name)}`);
+  const afterNames = names(reordered.body);
+  check('順序已改變（民法排到行政法之前）',
+    !beforeIdx && afterNames.indexOf(T('民法')) < afterNames.indexOf(T('行政法')),
+    `before=${beforeNames} after=${afterNames}`);
 
   const badReorder = await call('POST', '/subjects/reorder', { orderedIds: [s1.body.id, s1.body.id] }, H());
   check('重複 ID 的排序 → 400', badReorder.status === 400, JSON.stringify(badReorder.body?.error?.code));
@@ -148,8 +160,8 @@ const run = async () => {
   const groupGone = await call('GET', `/question-groups/${g1.body.id}`);
   check('科目刪除後題組連帶軟刪除 → 404', groupGone.status === 404);
 
-  const recreate = await call('POST', '/subjects', { name: '行政法' }, H());
-  check('軟刪除後可重建同名科目', recreate.status === 201);
+  const recreate = await call('POST', '/subjects', { name: T('行政法') }, H());
+  check('軟刪除後可重建同名科目', recreate.status === 201, JSON.stringify(recreate.body));
 
   console.log('\n=== 未認證存取 ===');
   const saved = new Map(jar);

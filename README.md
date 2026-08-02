@@ -66,12 +66,18 @@ DATABASE_URL=postgresql://使用者:密碼@localhost:5432/資料庫名稱
 # 2. 安裝相依套件（安裝後會自動補齊 .env 中的其餘變數）
 pnpm install
 
-# 3. 啟動 Redis
+# 3. 建立資料表（第一次啟動前必做；之後有新的 migration 時再跑）
+pnpm --filter @repo/db db:migrate
+
+# 4. 啟動 Redis
 pnpm redis:up
 
-# 4. 啟動後端與前端
+# 5. 啟動後端與前端
 pnpm dev
 ```
+
+> 順序不可對調：後端啟動時會連線資料庫並寫入種子資料（能力類型、錯誤類型、
+> prompt 版本），資料表不存在就會啟動失敗。
 
 打開 <http://localhost:3000>。
 
@@ -83,12 +89,6 @@ pnpm dev
 | 健康檢查 | <http://localhost:4000/api/v1/health/deps> |
 
 ### 首次使用
-
-首次啟動前需先建立資料表：
-
-```bash
-pnpm --filter @repo/db db:migrate
-```
 
 系統第一次啟動時沒有任何帳號。開啟 <http://localhost:3000> 會自動導向 `/setup` 建立你的帳號
 （密碼至少 8 字元，且不得與帳號相同；輸入框右側有顯示／隱藏切換）。
@@ -116,15 +116,27 @@ pnpm lint
 pnpm test                # 單元測試
 pnpm build
 
-# API 端到端驗證（需先啟動 Redis 與後端；預設打 :4000，可用 BASE 覆寫）
-# 會實際建立科目、題目與作答紀錄，建議打在測試資料庫上。
-# Phase 4 起後端必須以 Mock provider 啟動，否則測試會消耗 AI 額度且結果不可重現：
-#   node scripts/create-test-db.mjs --drop
-#   DATABASE_URL=<...把資料庫名稱換成 <db>_test> PORT=4101 \
-#     AI_PROVIDER=mock SEARCH_PROVIDER=mock node apps/api/dist/main.js
-# 注意順序：先重置資料庫再啟動後端，種子資料是啟動時寫入的。
+# API 端到端驗證
+# 這些腳本會實際建立科目、題目與作答紀錄，因此預設打「測試後端」:4101，
+# 不會碰到 pnpm dev 的 :4000。要改目標請自行設 BASE。
+#
+# 完整流程（四步都不能少，且順序不可對調）：
+#   1) 重置測試資料庫
+#      node scripts/create-test-db.mjs --drop
+#   2) 套用 migration（新建的資料庫是空的，少了這步後端起不來）
+#      DATABASE_URL=<把資料庫名稱換成 <db>_test> pnpm --filter @repo/db db:migrate
+#   3) 以 Mock provider 啟動測試後端
+#      （不用 Mock 會消耗真實 AI 額度，且結果不可重現）
+#      DATABASE_URL=<同上> PORT=4101 AI_PROVIDER=mock SEARCH_PROVIDER=mock \
+#        node apps/api/dist/main.js
+#   4) 跑測試
 pnpm test:api-e2e
-BASE=http://localhost:4101/api/v1 pnpm test:api-e2e
+#
+# 為什麼 2、3 不能對調：種子資料（能力類型、錯誤類型、prompt 版本）是後端
+# 啟動時寫入的。先起後端再重置資料庫，種子就會消失，Phase 3 之後會整批失敗。
+#
+# Windows PowerShell 沒有 `VAR=值 指令` 這種寫法，請改用：
+#   $env:DATABASE_URL="..."; $env:PORT="4101"; node apps/api/dist/main.js
 
 # 環境變數
 pnpm bootstrap:env       # 補齊缺少的變數（可重複執行，不會覆寫既有值）

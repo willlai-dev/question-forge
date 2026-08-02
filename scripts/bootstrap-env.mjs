@@ -223,19 +223,29 @@ function main() {
     return;
   }
 
-  // --- 2. 組出需要補上的內容（只補缺的，絕不覆寫） --------------------
+  // --- 2. 組出需要補上的內容（只補缺的，絕不覆寫已有值） ----------------
   const appended = [];
   const addedKeys = [];
+  /** 鍵已存在但值是空的 → 就地補值（見下方 isBlank 的說明）。 */
+  const filledInPlace = new Map();
+
+  // 「沒有這個鍵」與「有這個鍵但值是空字串」都算缺。
+  // 照 README 執行 `cp .env.example .env` 之後，每個自動產生的鍵都已經存在但為空；
+  // 若只用 has() 判斷，這裡會誤判為「已完整」而一個密鑰都不產生，
+  // 導致 redis:up 與 API 啟動全部失敗，且再跑一次本腳本也修不好。
+  const isBlank = (key) => !existing.get(key);
 
   const addSection = (title, entries) => {
-    const pending = entries.filter(([key]) => !existing.has(key));
+    const pending = entries.filter(([key]) => isBlank(key));
     if (pending.length === 0) return;
-    appended.push('', `# --- ${title} ---`);
+    const toAppend = [];
     for (const [key, value] of pending) {
-      appended.push(`${key}=${escapeValue(value)}`);
+      if (existing.has(key)) filledInPlace.set(key, value);
+      else toAppend.push(`${key}=${escapeValue(value)}`);
       existing.set(key, value);
       addedKeys.push(key);
     }
+    if (toAppend.length > 0) appended.push('', `# --- ${title} ---`, ...toAppend);
   };
 
   // 2a. 新檔時先放必要變數的空佔位
@@ -258,7 +268,7 @@ function main() {
   }
 
   // 2d. REDIS_URL 由密碼與主機推導（若使用者已自訂則保留）
-  if (!existing.has('REDIS_URL')) {
+  if (isBlank('REDIS_URL')) {
     const password = existing.get('REDIS_PASSWORD') ?? '';
     const host = existing.get('REDIS_HOST') ?? '127.0.0.1';
     const port = existing.get('REDIS_PORT') ?? '6379';
@@ -268,11 +278,21 @@ function main() {
     ]);
   }
 
-  // --- 3. 寫回 .env（append-only，原有內容一字未動） ------------------
-  if (appended.length > 0) {
-    const needsNewline = originalText.length > 0 && !originalText.endsWith('\n');
-    const block = (needsNewline ? '\n' : '') + appended.join('\n') + '\n';
-    writeFileSync(ENV_PATH, originalText + block, 'utf8');
+  // --- 3. 寫回 .env ---------------------------------------------------
+  // 空值的鍵就地補上（不改動該行以外的任何內容，也不重複附加同名鍵，
+  // 免得同一個變數在檔案裡出現兩次、靠解析器的先後順序決定勝負）；
+  // 完全不存在的鍵才附加到檔尾。有值的鍵一律原封不動。
+  if (appended.length > 0 || filledInPlace.size > 0) {
+    let text = originalText;
+    for (const [key, value] of filledInPlace) {
+      const pattern = new RegExp(`^([ \\t]*${key}[ \\t]*=)[ \\t]*$`, 'm');
+      text = text.replace(pattern, `$1${escapeValue(value)}`);
+    }
+    if (appended.length > 0) {
+      const needsNewline = text.length > 0 && !text.endsWith('\n');
+      text += (needsNewline ? '\n' : '') + appended.join('\n') + '\n';
+    }
+    writeFileSync(ENV_PATH, text, 'utf8');
     log(`[env] 已補上 ${addedKeys.length} 個變數：${addedKeys.join(', ')}`);
   } else {
     log('[env] .env 已完整，無需變更。');

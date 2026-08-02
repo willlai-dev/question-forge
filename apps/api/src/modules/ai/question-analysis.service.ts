@@ -21,6 +21,7 @@ import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import { AppException } from '../../common/app.exception';
 import { ENV } from '../../config/env.config';
 import { DATABASE } from '../../infra/infra.module';
+import { MistakeRecordsService } from '../quiz/mistake-records.service';
 import { TagAliasesService } from '../tags/tag-aliases.service';
 import { AiGatewayService } from './ai-gateway.service';
 import { EvidenceService } from './evidence.service';
@@ -58,6 +59,7 @@ export class QuestionAnalysisService {
     private readonly prompts: PromptBuilder,
     private readonly promptSeed: PromptSeedService,
     private readonly tagAliases: TagAliasesService,
+    private readonly mistakeRecords: MistakeRecordsService,
   ) {}
 
   async run(input: AnalysisJobInput, report: ProgressReporter): Promise<{ servedFromCache: boolean }> {
@@ -428,7 +430,13 @@ export class QuestionAnalysisService {
    * 連鎖效果（驗收標準 #18）：
    *   1. questions.status = 'disputed'
    *   2. 該題新的作答 is_provisional = true（由 quiz 模組在寫入時判斷）
-   *   3. 統計查詢一律排除 provisional（Phase 2 就已寫入查詢條件）
+   *   3. **該題既有的作答一併補標為 provisional**
+   *   4. 錯題紀錄重算，讓錯題本與統計一致
+   *   5. 統計查詢一律排除 provisional（Phase 2 就已寫入查詢條件）
+   *
+   * 第 3 步不能省：is_provisional 只在寫入作答的當下依題目狀態決定，
+   * 而爭議一定是「先答錯、才拿去分析」才產生的 —— 觸發這次分析的那一筆作答
+   * 必然早於 disputed 狀態。少了這步，最該被排除的那筆反而會留在診斷裡。
    */
   private async raiseConflict(
     tx: Database,
@@ -462,13 +470,32 @@ export class QuestionAnalysisService {
 
     if (inserted.length === 0) return;
 
+    const now = new Date();
+
     await tx
       .update(schema.questions)
-      .set({ status: 'disputed', updatedAt: new Date() })
+      .set({ status: 'disputed', updatedAt: now })
       .where(eq(schema.questions.id, input.questionId));
 
+    const affected = await tx
+      .update(schema.userAnswers)
+      .set({ isProvisional: true, updatedAt: now })
+      .where(
+        and(
+          eq(schema.userAnswers.questionId, input.questionId),
+          eq(schema.userAnswers.isProvisional, false),
+        ),
+      )
+      .returning({ userId: schema.userAnswers.userId });
+
+    // 作答不再算數，錯題紀錄就得跟著重算（recompute 只看非 provisional 的歷史）。
+    for (const userId of new Set(affected.map((row) => row.userId))) {
+      await this.mistakeRecords.recompute(tx, userId, input.questionId);
+    }
+
     this.logger.warn(
-      `題目 ${input.questionId} 產生答案爭議，已標記為 disputed 並排除於能力診斷之外`,
+      `題目 ${input.questionId} 產生答案爭議，已標記為 disputed；` +
+        `${affected.length} 筆既有作答改為暫記，已排除於能力診斷之外`,
     );
   }
 

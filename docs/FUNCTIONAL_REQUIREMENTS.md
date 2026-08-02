@@ -78,7 +78,7 @@
 | FR-QUIZ-11 | `after_submit` 模式在交卷前，API 回應中不得包含任何正確答案資訊。 | P2 |
 | FR-QUIZ-12 | 作答紀錄保存：`quizSessionId`、`questionId`、`selectedAnswers`、`correctAnswersSnapshot`、`isCorrect`、`responseTimeMs`、`attemptNumber`、`answeredAt`、`answerChangedCount`、`revealMode`。 | P2 |
 | FR-QUIZ-13 | 題目日後被修改時，歷史紀錄仍保有當時的答案快照與題目版本號。 | P2 |
-| FR-QUIZ-14 ✅ | 爭議題（`answer_conflicts` 待審）的作答標記 `is_provisional`，不計入正式能力診斷。 | P4 |
+| FR-QUIZ-14 ✅ | 爭議題（`answer_conflicts` 待審）的作答標記 `is_provisional`，不計入正式能力診斷。**建立爭議時會回頭把該題既有作答一併補標**——真實流程是「先答錯 → 進錯題本 → 才按 AI 分析」，觸發分析的那一筆必然早於 disputed 狀態。錯題本／錯題統計另在讀取端排除 `disputed`／`excluded` 題目。 | P4 |
 
 ## 6. 錯題系統
 
@@ -134,6 +134,8 @@
 | FR-CONF-03 | 前端在該題顯示「答案存在爭議」。 | P4 |
 | FR-CONF-04 | 待審期間該題不用於能力診斷，作答結果標示為暫定。 | P4 |
 | FR-CONF-05 | 人工可裁決為：保留原答案／修改答案／更新解析／標記為爭議題／排除該題。 | P4 |
+| FR-CONF-06 ✅ | 裁決為「修改答案」時，該題**所有既有作答必須以新答案重新判分**（沿用與作答當下同一支純函式 `gradeAnswer`，不經 AI），再恢復計入統計；否則等於用新答案的名義把舊答案的判定結果放回診斷。 | P4 |
+| FR-CONF-07 ✅ | 裁決為「標記為爭議題」或「排除該題」時，作答**維持**暫記不計入診斷；其餘裁決才恢復。任何裁決後一律重算錯題紀錄。 | P4 |
 
 ### 8.3 多題整合分析
 
@@ -208,7 +210,7 @@
 | 15 ✅ | 可保存搜尋來源與引用 | FR-AI-06 | P4 | 整合測試 |
 | 16 ✅ | AI 引用只指向實際存在來源 | FR-AI-07 | P4 | 單元 + 整合 |
 | 17 ✅ | 答案衝突建立待審核紀錄 | FR-CONF-01～02 | P4 | 整合測試 |
-| 18 ✅ | 爭議題不影響能力診斷 | FR-QUIZ-14、FR-CONF-04 | P4 | 整合測試 |
+| 18 ✅ | 爭議題不影響能力診斷 | FR-QUIZ-14、FR-CONF-04、FR-CONF-06～07 | P4 | 整合測試 |
 | 19 | 可產生多題整合分析 | FR-AGG-01～05 | P5 | 整合 + E2E |
 | 20 ✅ | Redis、PostgreSQL、NestJS、Next.js 可依文件完整啟動 | — | P0 | README 手動驗證 |
 | 21 | lint、typecheck、test、build 全部通過 | — | 每階段 | `pnpm verify` |

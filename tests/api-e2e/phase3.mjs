@@ -10,7 +10,9 @@
  *   2. AI 不可能繞過審核建立正式標籤（FR-TAG-06／§22 之 12）——
  *      系統中不存在「由名稱直接建立標籤」的端點。
  */
-const BASE = process.env.BASE ?? 'http://localhost:4000/api/v1';
+// 預設打測試後端（:4101）而非開發後端（:4000）：這些腳本會實際建立科目、
+// 題目與作答紀錄，誤打到正式資料庫會污染真實題庫。要換目標請設 BASE。
+const BASE = process.env.BASE ?? 'http://localhost:4101/api/v1';
 
 const jar = new Map();
 let pass = 0;

@@ -15,6 +15,9 @@ import { QuizSessionsService } from './quiz-sessions.service';
 @Module({
   controllers: [QuizSessionsController, MistakesController],
   providers: [QuizSessionsService, MistakesService, MistakeRecordsService],
-  exports: [QuizSessionsService],
+  // MistakeRecordsService 對外開放，是因為錯題紀錄是「由作答歷史推導」的衍生狀態：
+  // 任何會改變那段歷史的人（例如答案爭議裁決改了正確答案、或把作答改成暫記）
+  // 都必須重算，否則錯題本會停在舊答案的判定上。
+  exports: [QuizSessionsService, MistakeRecordsService],
 })
 export class QuizModule {}

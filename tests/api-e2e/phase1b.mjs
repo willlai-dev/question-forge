@@ -2,9 +2,15 @@
  * Phase 1b 端到端驗證：題目 CRUD 與 JSON 匯入。
  *
  * 以 Node fetch 執行，避免 shell 字碼頁轉換污染中文測試資料。
- * 需先啟動後端；預設打 :4000，可用 BASE 覆寫。
+ * 需先啟動後端；預設打測試後端 :4101，可用 BASE 覆寫。
  */
-const BASE = process.env.BASE ?? 'http://localhost:4000/api/v1';
+// 預設打測試後端（:4101）而非開發後端（:4000）：這些腳本會實際建立科目、
+// 題目與作答紀錄，誤打到正式資料庫會污染真實題庫。要換目標請設 BASE。
+const BASE = process.env.BASE ?? 'http://localhost:4101/api/v1';
+
+// 題號在題組內唯一，因此固定的匯入題組會讓第二次執行多出「題號重複」錯誤，
+// 使 errorCount 的斷言失準。每次執行換一個題組名稱即可重複跑。
+const stamp = Date.now().toString(36);
 
 const jar = new Map();
 let pass = 0;
@@ -65,7 +71,9 @@ async function refreshCsrf() {
 }
 
 const validQuestion = (n, overrides = {}) => ({
-  externalId: `E2E-${n}`,
+  // externalId 全域唯一：固定值會在第二次執行觸發 DUPLICATE_EXTERNAL_ID_IN_DB，
+  // 讓 errorCount 多一筆，因此一併帶上本次執行的戳記。
+  externalId: `E2E-${stamp}-${n}`,
   questionNumber: n,
   type: 'single_choice',
   stem: `第 ${n} 題：下列何者屬於行政處分？`,
@@ -88,7 +96,7 @@ const importFile = (questions, overrides = {}) => ({
   schemaVersion: '1.0.0',
   subject: { name: '匯入測試科目' },
   chapter: { name: '匯入測試章節' },
-  questionGroup: { name: '匯入測試題組', source: '單元測試', year: 2026 },
+  questionGroup: { name: `匯入測試題組-${stamp}`, source: '單元測試', year: 2026 },
   questions,
   ...overrides,
 });
@@ -258,9 +266,11 @@ const run = async () => {
 
   const imported = await call('GET', `/questions?questionGroupId=${goodCommit.body.questionGroupId}&pageSize=50`);
   check('匯入的題目可查詢', imported.body.items.length === 3);
-  const noExplanation = imported.body.items.find((q) => q.externalId === 'E2E-101');
-  check('沒有解析的題目 explanation 仍為 null（未被編造）', noExplanation?.explanation === null);
-  const withReview = imported.body.items.find((q) => q.externalId === 'E2E-103');
+  const noExplanation = imported.body.items.find((q) => q.externalId === `E2E-${stamp}-101`);
+  check('沒有解析的題目 explanation 仍為 null（未被編造）',
+    noExplanation !== undefined && noExplanation.explanation === null,
+    `externalIds=${imported.body.items.map((q) => q.externalId).join(',')}`);
+  const withReview = imported.body.items.find((q) => q.externalId === `E2E-${stamp}-103`);
   check('reviewRequired 正確帶入', withReview?.reviewRequired === true);
 
   console.log('\n=== 篩選 ===');

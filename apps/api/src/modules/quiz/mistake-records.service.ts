@@ -25,7 +25,17 @@ export class MistakeRecordsService {
   /**
    * 依作答歷史重算某一題的錯題紀錄。
    *
-   * 從未答錯過的題目不會產生紀錄；已存在的紀錄則**永遠不刪除**（FR-MIS-05）。
+   * 從未答錯過的題目不會產生紀錄。**答對之後也不會刪除既有紀錄**（FR-MIS-05）——
+   * 那種情況下歷史裡仍有一次答錯，狀態機會保留 mistakeCount 並改以
+   * masteryState／isResolved 表示已掌握，紀錄本身留著讓你還能回去複習。
+   *
+   * 唯一會刪掉紀錄的情況是「計入診斷的作答裡，已經一次錯誤都沒有」，
+   * 也就是 progress 折疊完仍為 null。這不是「後來答對了」，而是那次錯誤本身不再成立：
+   *   - 答案爭議待審，該題作答全部轉為暫記而不計入診斷；
+   *   - 或裁決認定題庫答案有誤、重新判分後那筆根本就是答對的。
+   * 這時留著紀錄等於宣稱「你這題錯過」，但依現有資料那並非事實。
+   * 錯題紀錄是 user_answers 的衍生投影，來源沒了就不該留下投影；
+   * 之後若爭議裁決回復原答案，同一份歷史會把紀錄原樣重算回來。
    */
   async recompute(tx: Database, userId: string, questionId: string): Promise<void> {
     const answers = await tx
@@ -56,7 +66,17 @@ export class MistakeRecordsService {
       }
     }
 
-    if (progress === null) return;
+    if (progress === null) {
+      await tx
+        .delete(schema.mistakeRecords)
+        .where(
+          and(
+            eq(schema.mistakeRecords.userId, userId),
+            eq(schema.mistakeRecords.questionId, questionId),
+          ),
+        );
+      return;
+    }
 
     const recent = answers.slice(-RECENT_WINDOW).map((a) => a.isCorrect);
     const recentAccuracy = computeRecentAccuracy(recent);

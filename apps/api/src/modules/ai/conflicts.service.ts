@@ -1,6 +1,8 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { computeQuestionContentHash } from '@repo/contracts/server';
 import {
+  gradeAnswer,
+  normalizeAnswerKeys,
   ERROR_CODES,
   type AnswerConflictResponse,
   type ListConflictsQuery,
@@ -12,6 +14,7 @@ import { and, asc, desc, eq, sql, type SQL } from 'drizzle-orm';
 
 import { AppException } from '../../common/app.exception';
 import { DATABASE } from '../../infra/infra.module';
+import { MistakeRecordsService } from '../quiz/mistake-records.service';
 
 /**
  * 答案衝突的人工裁決（規格 §10）。
@@ -23,7 +26,10 @@ import { DATABASE } from '../../infra/infra.module';
 export class ConflictsService {
   private readonly logger = new Logger(ConflictsService.name);
 
-  constructor(@Inject(DATABASE) private readonly database: DatabaseHandle) {}
+  constructor(
+    @Inject(DATABASE) private readonly database: DatabaseHandle,
+    private readonly mistakeRecords: MistakeRecordsService,
+  ) {}
 
   async list(
     userId: string,
@@ -155,9 +161,19 @@ export class ConflictsService {
         })
         .where(eq(schema.answerConflicts.id, id));
 
-      // 爭議解除後，這題既有的暫記作答恢復計入統計。
-      // 仍標為 disputed 的情況不解除 —— 那正是要繼續排除的狀態。
-      if (dto.decision !== 'marked_disputed') {
+      // 答案被改了，既有作答的對錯就是用舊答案算出來的，必須重新判分後才能恢復計入，
+      // 否則會用「新的正確答案」的名義，把「舊答案的判定結果」放回統計裡。
+      if (dto.decision === 'answer_updated') {
+        await this.regradeAnswers(tx, questionId, dto.correctAnswers!, now);
+      }
+
+      // 爭議解除後，這題既有的暫記作答恢復計入統計。兩種情況不解除：
+      //   marked_disputed —— 題目仍有爭議，那正是要繼續排除的狀態；
+      //   question_excluded —— 題目本身被判定不該用，作答更沒有理由回到診斷裡。
+      const restoresAnswers =
+        dto.decision !== 'marked_disputed' && dto.decision !== 'question_excluded';
+
+      if (restoresAnswers) {
         await tx
           .update(schema.userAnswers)
           .set({ isProvisional: false, updatedAt: now })
@@ -168,6 +184,9 @@ export class ConflictsService {
             ),
           );
       }
+
+      // 不論恢復或維持排除，「哪些作答算數」都變了，錯題紀錄一律重算。
+      await this.recomputeMistakesForQuestion(tx, questionId);
     });
 
     this.logger.log(`答案爭議 ${id} 已裁決為 ${dto.decision}`);
@@ -181,6 +200,60 @@ export class ConflictsService {
    * 既有的 AI 解析會因此自動失效（規格 §12 的快取判準），
    * 下次分析會重新研究，而不是沿用一份基於舊答案的解析。
    */
+  /**
+   * 依新的正確答案，把這題所有既有作答重新判分。
+   *
+   * 判分一律走 `gradeAnswer` 這支純函式 —— 與作答當下用的是同一支，
+   * 保證「改答案後的重判」跟「當初的判分」規則完全一致，且同樣不經過 AI。
+   * correct_answers_snapshot 也一併更新，讓歷史紀錄看得出當時比對的是哪組答案。
+   */
+  private async regradeAnswers(
+    tx: Parameters<Parameters<DatabaseHandle['db']['transaction']>[0]>[0],
+    questionId: string,
+    correctAnswers: string[],
+    now: Date,
+  ): Promise<void> {
+    const normalized = normalizeAnswerKeys(correctAnswers);
+
+    const answers = await tx
+      .select({
+        id: schema.userAnswers.id,
+        selectedAnswers: schema.userAnswers.selectedAnswers,
+        isCorrect: schema.userAnswers.isCorrect,
+      })
+      .from(schema.userAnswers)
+      .where(eq(schema.userAnswers.questionId, questionId));
+
+    let changed = 0;
+    for (const answer of answers) {
+      const isCorrect = gradeAnswer(answer.selectedAnswers, normalized);
+      if (isCorrect !== answer.isCorrect) changed += 1;
+      await tx
+        .update(schema.userAnswers)
+        .set({ isCorrect, correctAnswersSnapshot: normalized, updatedAt: now })
+        .where(eq(schema.userAnswers.id, answer.id));
+    }
+
+    if (changed > 0) {
+      this.logger.log(`題目 ${questionId} 改答案後重新判分：${changed}/${answers.length} 筆對錯有變動`);
+    }
+  }
+
+  /** 重算這題所有作答者的錯題紀錄（本系統只有一個使用者，仍照實依 user 分組）。 */
+  private async recomputeMistakesForQuestion(
+    tx: Parameters<Parameters<DatabaseHandle['db']['transaction']>[0]>[0],
+    questionId: string,
+  ): Promise<void> {
+    const owners = await tx
+      .selectDistinct({ userId: schema.userAnswers.userId })
+      .from(schema.userAnswers)
+      .where(eq(schema.userAnswers.questionId, questionId));
+
+    for (const owner of owners) {
+      await this.mistakeRecords.recompute(tx, owner.userId, questionId);
+    }
+  }
+
   private async applyAnswerUpdate(
     tx: Parameters<Parameters<DatabaseHandle['db']['transaction']>[0]>[0],
     questionId: string,
