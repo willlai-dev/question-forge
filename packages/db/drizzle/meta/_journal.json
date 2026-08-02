@@ -29,6 +29,13 @@
       "when": 1785522648920,
       "tag": "0003_phase4_ai_analysis",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785688565708,
+      "tag": "0004_phase5_aggregate_analysis",
+      "breakpoints": true
     }
   ]
 }

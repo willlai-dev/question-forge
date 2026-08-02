@@ -1,8 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { StatsOverviewResponse } from '@repo/contracts';
+import { percent, type StatsOverviewResponse } from '@repo/contracts';
 import { schema, type DatabaseHandle } from '@repo/db';
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 
+import { diagnosticMistakeScope, diagnosticScope } from '../../common/diagnostic-scope';
 import { DATABASE } from '../../infra/infra.module';
 
 /** 近期場次顯示筆數。 */
@@ -11,9 +12,12 @@ const RECENT_SESSION_LIMIT = 5;
 /**
  * 學習概況統計（FR-QUIZ-09）。
  *
- * 所有正確率相關數字都排除 `is_provisional = true` 的作答（FR-QUIZ-14）。
- * 該欄位在 Phase 2 就存在且預設為 false，因此現在的結果不受影響，
- * 而 Phase 4 開始標記爭議題時，統計會自動正確，不需要回頭改這裡。
+ * 所有診斷相關數字都走 `common/diagnostic-scope` 的共用判準：
+ * 排除暫記作答（FR-QUIZ-14）、軟刪除題目，以及爭議中／已排除的題目（驗收 #18）。
+ *
+ * 這裡曾經只過濾 `is_provisional`，導致本頁的錯題總數與 `/mistakes/stats`
+ * 對不起來——同一個使用者、同一份資料，兩個畫面給出不同答案。
+ * 判準現在只有一份，兩邊都用它。
  */
 @Injectable()
 export class StatsService {
@@ -21,10 +25,7 @@ export class StatsService {
 
   async overview(userId: string): Promise<StatsOverviewResponse> {
     const { db } = this.database;
-    const diagnostic = and(
-      eq(schema.userAnswers.userId, userId),
-      eq(schema.userAnswers.isProvisional, false),
-    );
+    const diagnostic = diagnosticScope(userId);
 
     const [bank] = await db
       .select({
@@ -53,6 +54,7 @@ export class StatsService {
       .from(schema.quizSessions)
       .where(eq(schema.quizSessions.userId, userId));
 
+    // 這兩支都必須 join questions —— 判準要看題目的 deleted_at 與 status。
     const [answers] = await db
       .select({
         answered: sql<number>`count(*)::int`,
@@ -60,6 +62,7 @@ export class StatsService {
         avgTime: sql<number | null>`avg(${schema.userAnswers.responseTimeMs})::int`,
       })
       .from(schema.userAnswers)
+      .innerJoin(schema.questions, eq(schema.questions.id, schema.userAnswers.questionId))
       .where(diagnostic);
 
     const [mistakes] = await db
@@ -70,7 +73,8 @@ export class StatsService {
         mastered: sql<number>`count(*) filter (where ${schema.mistakeRecords.masteryState} = 'mastered')::int`,
       })
       .from(schema.mistakeRecords)
-      .where(eq(schema.mistakeRecords.userId, userId));
+      .innerJoin(schema.questions, eq(schema.questions.id, schema.mistakeRecords.questionId))
+      .where(diagnosticMistakeScope(userId));
 
     const recentSessions = await db
       .select()
@@ -91,7 +95,9 @@ export class StatsService {
       .innerJoin(schema.subjects, eq(schema.subjects.id, schema.questions.subjectId))
       .where(diagnostic)
       .groupBy(schema.subjects.id, schema.subjects.name)
-      .orderBy(desc(sql`count(*)`));
+      // 名稱是必要的平手條件：只依 count 排序時，數量相同的科目順序由資料庫決定，
+      // 同一份資料可能每次回傳不同順序。
+      .orderBy(desc(sql`count(*)`), asc(schema.subjects.name));
 
     const answeredCount = answers?.answered ?? 0;
     const correctCount = answers?.correct ?? 0;
@@ -133,10 +139,4 @@ export class StatsService {
       })),
     };
   }
-}
-
-/** 百分比，取到小數第二位；分母為 0 時回 null 而不是 0 —— 沒作答不等於 0 分。 */
-function percent(numerator: number, denominator: number): number | null {
-  if (denominator === 0) return null;
-  return Math.round((numerator / denominator) * 10000) / 100;
 }

@@ -89,6 +89,10 @@ export const envSchema = z.object({
   AI_MAX_TOKENS_PLAN: positiveInt.default(1500),
   AI_MAX_TOKENS_EVIDENCE: positiveInt.default(3000),
   AI_MAX_TOKENS_FINAL: positiveInt.default(4500),
+  // 多題整合分析（Phase 5）：只呼叫一次模型，但要在大量統計數字中找出跨知識點的
+  // 共同錯誤模式，屬於最需要推理的一步，因此與最終解析同級。
+  AI_REASONING_EFFORT_AGGREGATE: reasoningEffortSchema.default('high'),
+  AI_MAX_TOKENS_AGGREGATE: positiveInt.default(4500),
   AI_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.2),
 
   // --- 搜尋 ---

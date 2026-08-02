@@ -15,6 +15,7 @@ export * from './api/question-bank';
 export * from './api/questions';
 export * from './api/quiz';
 export * from './api/mistakes';
+export * from './api/settings';
 export * from './api/stats';
 export * from './api/tags';
 export * from './api/ai';
@@ -25,6 +26,7 @@ export * from './import/validate';
 export * from './quiz/index';
 export * from './tags/index';
 export * from './ai/index';
+export * from './analysis/index';
 
 // 注意：content-hash 刻意「不」從這裡匯出。
 // 它依賴 node:crypto，而本套件同時被 Next.js 前端 bundle 引用 ——

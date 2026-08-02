@@ -368,3 +368,62 @@ export const answerConflicts = pgTable(
     index('answer_conflicts_status_idx').on(t.reviewStatus),
   ],
 );
+
+/**
+ * 多題整合分析（規格 §11、FR-AGG-01～05）。
+ *
+ * `stats_snapshot` 是 **NOT NULL**：可為 null 等於允許存在一列無法重現的分析結果，
+ * 而 FR-AGG-05 要的正是「結論可以回頭驗證」。所有結論都必須能對照當時的統計數字。
+ */
+export const aggregateAnalyses = pgTable(
+  'aggregate_analyses',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    // ERD 未列，但少了它就無法追溯一份分析出自哪一次執行。
+    aiJobId: uuid('ai_job_id').references(() => aiJobs.id, { onDelete: 'set null' }),
+
+    scopeType: text('scope_type').notNull().default('all'),
+    scopeRefIds: jsonb('scope_ref_ids').notNull().default(sql`'[]'::jsonb`),
+    periodFrom: timestamp('period_from', { withTimezone: true }).notNull(),
+    periodTo: timestamp('period_to', { withTimezone: true }).notNull(),
+
+    /** 分析當下的統計數據，讓結論可重現（FR-AGG-05）。 */
+    statsSnapshot: jsonb('stats_snapshot').notNull(),
+    representativeQuestionIds: uuid('representative_question_ids')
+      .array()
+      .notNull()
+      .default(sql`'{}'`),
+
+    weakestKnowledgeTags: jsonb('weakest_knowledge_tags'),
+    commonErrorTypes: jsonb('common_error_types'),
+    errorPatterns: jsonb('error_patterns'),
+    reviewPriority: jsonb('review_priority'),
+    recommendedGroups: jsonb('recommended_groups'),
+    improvement: jsonb('improvement'),
+    suggestions: jsonb('suggestions'),
+    confidence: numeric('confidence', { precision: 4, scale: 3 }),
+
+    promptVersion: text('prompt_version'),
+    model: text('model').notNull(),
+    analysisVersion: integer('analysis_version').notNull().default(1),
+    rawOutput: jsonb('raw_output'),
+    ...timestamps,
+  },
+  (t) => [
+    check(
+      'aggregate_analyses_scope_type_check',
+      sql`${t.scopeType} in ('all', 'subject', 'chapter', 'question_group', 'knowledge_tag')`,
+    ),
+    check('aggregate_analyses_period_check', sql`${t.periodTo} > ${t.periodFrom}`),
+    // 把純函式的上限鎖進資料庫，做法比照 mistake_records 的熟練狀態一致性約束。
+    // 數字必須與 REPRESENTATIVE_QUESTION_LIMIT 一致。
+    check(
+      'aggregate_analyses_representative_limit_check',
+      sql`cardinality(${t.representativeQuestionIds}) <= 15`,
+    ),
+    index('aggregate_analyses_user_created_idx').on(t.userId, t.createdAt.desc()),
+  ],
+);

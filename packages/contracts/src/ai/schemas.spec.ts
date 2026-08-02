@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildAggregateAnalysisSchema,
   buildEvidenceSynthesisSchema,
   buildFinalExplanationSchema,
   researchPlanSchema,
@@ -321,5 +322,157 @@ describe('finalExplanationSchema 語意驗證', () => {
     const modelOnly = buildFinalExplanationSchema({ ...context, researchMode: 'MODEL_ONLY' });
     const result = modelOnly.safeParse({ ...valid, citations: [] });
     expect(result.success).toBe(true);
+  });
+});
+
+// ------------------------------------------------------------ ④ 多題整合分析
+
+describe('buildAggregateAnalysisSchema', () => {
+  const context = {
+    allowedKnowledgeTagNames: new Set(['行政處分', '信賴保護原則']),
+    allowedErrorTypeCodes: new Set(['concept_confusion', 'careless']),
+    allowedPracticeRefIds: new Set(['q-1', 'g-1']),
+  };
+
+  const valid = {
+    weakestKnowledgeTags: [
+      { tagName: '行政處分', accuracy: 33.33, severity: 'high' as const, evidence: '10 題錯 7 題' },
+    ],
+    commonErrorTypes: [
+      { errorTypeCode: 'concept_confusion', count: 5, interpretation: '概念界線不清' },
+    ],
+    errorPatterns: [
+      {
+        pattern: '例外規定總是答錯',
+        relatedKnowledgeTags: ['行政處分'],
+        relatedErrorTypes: ['concept_confusion'],
+        explanation: '跨單元的共同弱點',
+      },
+    ],
+    reviewPriority: [
+      { rank: 1, target: '行政處分', reason: '正確率最低' },
+      { rank: 2, target: '信賴保護原則', reason: '連續答錯' },
+    ],
+    recommendedPractice: [
+      { kind: 'question' as const, refId: 'q-1', label: '第 1 題', reason: '反覆答錯' },
+    ],
+    improvement: {
+      hasImproved: true,
+      improvedAreas: ['信賴保護原則'],
+      stagnantAreas: [],
+      summary: '整體有進步',
+    },
+    learningSuggestions: ['先把定義背熟'],
+    analysisBasis: '依據 14 筆作答的統計',
+    confidence: 0.8,
+  };
+
+  it('合法輸出通過', () => {
+    expect(buildAggregateAnalysisSchema(context).safeParse(valid).success).toBe(true);
+  });
+
+  it('**自創知識點名稱會被擋下**', () => {
+    const result = buildAggregateAnalysisSchema(context).safeParse({
+      ...valid,
+      weakestKnowledgeTags: [
+        { tagName: '我自己想的知識點', accuracy: 10, severity: 'critical', evidence: '' },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('**自創錯誤類型代碼會被擋下**', () => {
+    const result = buildAggregateAnalysisSchema(context).safeParse({
+      ...valid,
+      commonErrorTypes: [{ errorTypeCode: 'made_up', count: 1, interpretation: '' }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('**推薦不存在的複習目標會被擋下**（否則點下去是死連結）', () => {
+    const result = buildAggregateAnalysisSchema(context).safeParse({
+      ...valid,
+      recommendedPractice: [
+        { kind: 'question', refId: 'q-does-not-exist', label: 'x', reason: 'y' },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('錯誤模式裡引用的知識點也要存在', () => {
+    const result = buildAggregateAnalysisSchema(context).safeParse({
+      ...valid,
+      errorPatterns: [
+        {
+          pattern: 'x',
+          relatedKnowledgeTags: ['不存在的'],
+          relatedErrorTypes: ['concept_confusion'],
+          explanation: 'y',
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('優先順序重複會被擋下', () => {
+    const result = buildAggregateAnalysisSchema(context).safeParse({
+      ...valid,
+      reviewPriority: [
+        { rank: 1, target: 'a', reason: 'x' },
+        { rank: 1, target: 'b', reason: 'y' },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('優先順序不連續會被擋下（第 1、第 5 順位無法執行）', () => {
+    const result = buildAggregateAnalysisSchema(context).safeParse({
+      ...valid,
+      reviewPriority: [
+        { rank: 1, target: 'a', reason: 'x' },
+        { rank: 5, target: 'b', reason: 'y' },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('優先順序空陣列可接受', () => {
+    const result = buildAggregateAnalysisSchema(context).safeParse({
+      ...valid,
+      reviewPriority: [],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('說有改善卻列不出改善項目會被擋下', () => {
+    const result = buildAggregateAnalysisSchema(context).safeParse({
+      ...valid,
+      improvement: { ...valid.improvement, hasImproved: true, improvedAreas: [] },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('沒有改善時不需要列出改善項目', () => {
+    const result = buildAggregateAnalysisSchema(context).safeParse({
+      ...valid,
+      improvement: { ...valid.improvement, hasImproved: false, improvedAreas: [] },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('學習建議不可為空——空的診斷沒有價值', () => {
+    const result = buildAggregateAnalysisSchema(context).safeParse({
+      ...valid,
+      learningSuggestions: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('多出未定義的欄位會被擋下（strict）', () => {
+    const result = buildAggregateAnalysisSchema(context).safeParse({
+      ...valid,
+      somethingExtra: 1,
+    });
+    expect(result.success).toBe(false);
   });
 });

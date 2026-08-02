@@ -452,6 +452,17 @@ Prompt 內容以檔案維護（進版控），啟動時 seed 進資料庫，讓�
 
 `stats_snapshot` 保存分析當下的統計數據，讓結論可重現（FR-AGG-05）。
 
+實作時額外加了三項（Phase 5，migration `0004`）：
+
+| 增補 | 理由 |
+|---|---|
+| `ai_job_id`（FK → `ai_jobs`，`ON DELETE set null`） | ERD 原本沒列。少了它就無法追溯一份分析出自哪一次執行 |
+| `stats_snapshot` 為 **NOT NULL** | 可為 null 等於允許存在一列無法回頭驗證的結論，而那正是 FR-AGG-05 要避免的 |
+| CHECK `cardinality(representative_question_ids) <= 15` | 把純函式的上限鎖進資料庫，做法比照 `mistake_records` 的熟練狀態一致性約束。數字須與 `REPRESENTATIVE_QUESTION_LIMIT` 一致 |
+
+`representative_question_ids` 是陣列，PostgreSQL 無法對它加外鍵。這可以接受：
+題目只會被軟刪除，ID 不會變成懸空；已刪除的題目在畫面上單純不顯示。
+
 ### `answer_conflicts`
 | 欄位 | 說明 |
 |---|---|

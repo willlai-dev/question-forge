@@ -24,10 +24,16 @@ export type AiJobStatus = z.infer<typeof aiJobStatusSchema>;
 /** 進度步驟。前端據此顯示「現在在做什麼」。 */
 export const aiProgressStepSchema = z.enum([
   'QUEUED',
+  // 單題三階段分析
   'ANALYZING_QUESTION',
   'SEARCHING_SOURCES',
   'SYNTHESIZING_EVIDENCE',
   'GENERATING_EXPLANATION',
+  // 多題整合分析（Phase 5）
+  'COLLECTING_STATS',
+  'SELECTING_QUESTIONS',
+  'GENERATING_DIAGNOSIS',
+  // 共用
   'SAVING_RESULT',
   'COMPLETED',
 ]);
@@ -40,6 +46,9 @@ export const AI_PROGRESS_STEPS: Record<AiProgressStep, { pct: number; label: str
   SEARCHING_SOURCES: { pct: 35, label: '搜尋並擷取外部資料' },
   SYNTHESIZING_EVIDENCE: { pct: 60, label: '整理證據' },
   GENERATING_EXPLANATION: { pct: 85, label: '產生完整解析' },
+  COLLECTING_STATS: { pct: 10, label: '彙總作答統計' },
+  SELECTING_QUESTIONS: { pct: 30, label: '挑選代表性錯題' },
+  GENERATING_DIAGNOSIS: { pct: 70, label: '產生整體診斷' },
   SAVING_RESULT: { pct: 95, label: '保存結果' },
   COMPLETED: { pct: 100, label: '完成' },
 };
@@ -259,3 +268,101 @@ export const promptVersionResponseSchema = z.object({
   createdAt: z.string().datetime(),
 });
 export type PromptVersionResponse = z.infer<typeof promptVersionResponseSchema>;
+
+// ---------------------------------------------------------------- 多題整合分析
+
+export const aggregateScopeTypeSchema = z.enum([
+  'all',
+  'subject',
+  'chapter',
+  'question_group',
+  'knowledge_tag',
+]);
+export type AggregateScopeType = z.infer<typeof aggregateScopeTypeSchema>;
+
+export const analyzeAggregateSchema = z
+  .object({
+    scopeType: aggregateScopeTypeSchema.default('all'),
+    /** scopeType 為 all 以外時，限定的對象 ID。 */
+    scopeRefIds: z.array(uuidSchema).max(50).default([]),
+    from: z.string().datetime().nullish(),
+    to: z.string().datetime().nullish(),
+    force: z.boolean().default(false),
+    priority: z.number().int().min(1).max(4).default(3),
+  })
+  .strict()
+  .refine((value) => value.scopeType === 'all' || value.scopeRefIds.length > 0, {
+    message: 'scopeType 不是 all 時必須指定 scopeRefIds。',
+    path: ['scopeRefIds'],
+  })
+  .refine((value) => !value.from || !value.to || new Date(value.from) < new Date(value.to), {
+    message: 'from 必須早於 to。',
+    path: ['from'],
+  });
+export type AnalyzeAggregateRequest = z.infer<typeof analyzeAggregateSchema>;
+
+export const aggregateAnalysisResponseSchema = z.object({
+  id: z.string().uuid(),
+  aiJobId: z.string().uuid().nullable(),
+  scopeType: aggregateScopeTypeSchema,
+  scopeRefIds: z.array(z.string()),
+  periodFrom: z.string().datetime(),
+  periodTo: z.string().datetime(),
+
+  weakestKnowledgeTags: z.array(
+    z.object({
+      tagName: z.string(),
+      accuracy: z.number(),
+      severity: z.enum(['critical', 'high', 'moderate']),
+      evidence: z.string(),
+    }),
+  ),
+  commonErrorTypes: z.array(
+    z.object({
+      errorTypeCode: z.string(),
+      name: z.string().nullable(),
+      count: z.number().int(),
+      interpretation: z.string(),
+    }),
+  ),
+  errorPatterns: z.array(
+    z.object({
+      pattern: z.string(),
+      relatedKnowledgeTags: z.array(z.string()),
+      relatedErrorTypes: z.array(z.string()),
+      explanation: z.string(),
+    }),
+  ),
+  reviewPriority: z.array(
+    z.object({ rank: z.number().int(), target: z.string(), reason: z.string() }),
+  ),
+  recommendedPractice: z.array(
+    z.object({
+      kind: z.enum(['question_group', 'question', 'knowledge_tag']),
+      refId: z.string(),
+      label: z.string(),
+      reason: z.string(),
+    }),
+  ),
+  improvement: z.object({
+    hasImproved: z.boolean(),
+    improvedAreas: z.array(z.string()),
+    stagnantAreas: z.array(z.string()),
+    summary: z.string(),
+  }),
+  learningSuggestions: z.array(z.string()),
+  analysisBasis: z.string(),
+  confidence: z.number().nullable(),
+
+  /** 分析當下的統計快照，讓結論可回頭驗證（FR-AGG-05）。 */
+  statsSnapshot: z.unknown(),
+  representativeQuestionIds: z.array(z.string()),
+  promptVersion: z.string().nullable(),
+  model: z.string(),
+  analysisVersion: z.number().int(),
+  createdAt: z.string().datetime(),
+});
+export type AggregateAnalysisResponse = z.infer<typeof aggregateAnalysisResponseSchema>;
+
+export const listAggregateAnalysesQuerySchema = paginationQuerySchema;
+export type ListAggregateAnalysesQuery = z.infer<typeof listAggregateAnalysesQuerySchema>;

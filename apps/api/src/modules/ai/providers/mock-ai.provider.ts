@@ -135,6 +135,71 @@ export class MockAiProvider implements AiProvider {
         };
       }
 
+      case 'aggregate_analysis': {
+        // 一律從脈絡給的清單裡挑，讓輸出必定通得過參照完整性驗證 ——
+        // 這條路徑要驗的是流程，不是模型的造詞能力。
+        const tags = context.knowledgeTagNames;
+        const accuracyOf = (index: number) => context.knowledgeTagAccuracies[index] ?? 0;
+
+        const weakest = tags.slice(0, 3).map((tagName, index) => ({
+          tagName,
+          accuracy: accuracyOf(index),
+          severity:
+            accuracyOf(index) < 40 ? 'critical' : accuracyOf(index) < 70 ? 'high' : 'moderate',
+          evidence: `此知識點的正確率為 ${accuracyOf(index)}%。`,
+        }));
+
+        const errorTypes = context.errorTypeCodes.slice(0, 3).map((errorTypeCode) => ({
+          errorTypeCode,
+          count: 1,
+          interpretation: `統計顯示 ${errorTypeCode} 反覆出現。`,
+        }));
+
+        const priorityTargets = [...tags.slice(0, 3), ...context.stagnantAreas].slice(0, 5);
+
+        return {
+          weakestKnowledgeTags: weakest,
+          commonErrorTypes: errorTypes,
+          errorPatterns:
+            tags.length >= 2
+              ? [
+                  {
+                    pattern: '多個知識點都錯在例外規定',
+                    relatedKnowledgeTags: tags.slice(0, 2),
+                    relatedErrorTypes: context.errorTypeCodes.slice(0, 1),
+                    explanation: '跨知識點的共同錯誤，通常代表讀法問題而非個別知識缺口。',
+                  },
+                ]
+              : [],
+          // rank 必須從 1 開始連續不重複，這正是語意驗證會檢查的規則。
+          reviewPriority: priorityTargets.map((target, index) => ({
+            rank: index + 1,
+            target,
+            reason: '依統計的正確率與連續錯誤排序。',
+          })),
+          recommendedPractice: context.practiceRefIds.slice(0, 5).map((refId) => ({
+            kind: 'question' as const,
+            refId,
+            label: `題目 ${refId.slice(0, 8)}`,
+            reason: '反覆答錯，建議優先重練。',
+          })),
+          improvement: {
+            hasImproved: context.hasImproved,
+            // hasImproved 為 true 時必須列出至少一項，否則語意驗證會擋下。
+            improvedAreas: context.hasImproved ? context.improvedAreas : [],
+            stagnantAreas: context.stagnantAreas,
+            summary: context.hasImproved ? '部分知識點已有進步。' : '本期間尚未看到明顯進步。',
+          },
+          learningSuggestions: [
+            '先把正確率最低的知識點的定義與例外整理成一頁筆記。',
+            '重練代表錯題，並在作答前先講出選擇的理由。',
+          ],
+          analysisBasis: `依據期間內 ${context.totalAnswered} 筆作答的統計，以及 ${context.practiceRefIds.length} 題代表性錯題。`,
+          // 沒有任何統計資料時不該裝作很有把握。
+          confidence: context.totalAnswered === 0 ? 0.3 : 0.8,
+        };
+      }
+
       default:
         return {};
     }
@@ -162,6 +227,16 @@ interface MockContext {
   fallbackErrorTypeCode: string;
   /** 題幹含衝突標記時為 true，用來走「AI 質疑題庫答案」的路徑。 */
   expectConflict: boolean;
+
+  // --- 多題整合分析（Phase 5）---
+  knowledgeTagNames: string[];
+  knowledgeTagAccuracies: number[];
+  errorTypeCodes: string[];
+  practiceRefIds: string[];
+  hasImproved: boolean;
+  improvedAreas: string[];
+  stagnantAreas: string[];
+  totalAnswered: number;
 }
 
 /** 題幹含這段文字時，Mock 會回報答案衝突。僅供測試用。 */
@@ -178,6 +253,14 @@ function parseMockContext(request: AiCompletionRequest): MockContext {
     allowedErrorTypeCodes: [],
     fallbackErrorTypeCode: 'undetermined',
     expectConflict: false,
+    knowledgeTagNames: [],
+    knowledgeTagAccuracies: [],
+    errorTypeCodes: [],
+    practiceRefIds: [],
+    hasImproved: false,
+    improvedAreas: [],
+    stagnantAreas: [],
+    totalAnswered: 0,
   };
 
   for (const message of request.messages) {

@@ -191,6 +191,11 @@ export const userAnswers = pgTable(
     index('user_answers_diagnostic_idx')
       .on(t.userId, t.isCorrect)
       .where(sql`is_provisional = false`),
+    // 多題分析一律以期間範圍掃描（Phase 5）。上面那個診斷索引不含 answered_at，
+    // 服務不了範圍查詢。btree 兩個方向都能掃，所以 ASC 也涵蓋由新到舊的排序。
+    index('user_answers_diagnostic_period_idx')
+      .on(t.userId, t.answeredAt)
+      .where(sql`is_provisional = false`),
   ],
 );
 
@@ -261,6 +266,14 @@ export const mistakeRecordErrorTypes = pgTable(
     errorTypeId: uuid('error_type_id')
       .notNull()
       .references(() => errorTypes.id, { onDelete: 'restrict' }),
+    /**
+     * 這一題因為這個錯誤類型而答錯的「已分析次數」。
+     *
+     * Phase 5 起才真正遞增，且只由 AI 分析路徑遞增（見 QuestionAnalysisService.markErrorType）：
+     * 手動標記是「取代」語意，重複按儲存不該被當成又錯了一次。
+     * Phase 5 之前寫入的列一律停在 1，那是一致的低估，不做回填——
+     * 手動標記的真實歷史無法還原，部分回填只會讓兩種來源的數字失去可比性。
+     */
     occurrenceCount: integer('occurrence_count').notNull().default(1),
     /** manual：使用者自行標記；ai：Phase 4 的分析結果。 */
     source: text('source').notNull().default('manual'),
@@ -269,6 +282,7 @@ export const mistakeRecordErrorTypes = pgTable(
   (t) => [
     primaryKey({ columns: [t.mistakeRecordId, t.errorTypeId] }),
     check('mistake_record_error_types_source_check', sql`${t.source} in ('manual', 'ai')`),
+    check('mistake_record_error_types_occurrence_check', sql`${t.occurrenceCount} > 0`),
     index('mistake_record_error_types_error_idx').on(t.errorTypeId),
   ],
 );

@@ -11,6 +11,7 @@ import { ImportsModule } from './modules/imports/imports.module';
 import { QuestionBankModule } from './modules/question-bank/question-bank.module';
 import { QuestionsModule } from './modules/questions/questions.module';
 import { QuizModule } from './modules/quiz/quiz.module';
+import { SettingsModule } from './modules/settings/settings.module';
 import { StatsModule } from './modules/stats/stats.module';
 import { TagsModule } from './modules/tags/tags.module';
 import { AiModule } from './modules/ai/ai.module';
@@ -36,6 +37,7 @@ import { AiModule } from './modules/ai/ai.module';
     QuizModule,
     StatsModule,
     AiModule,
+    SettingsModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: AppZodValidationPipe },

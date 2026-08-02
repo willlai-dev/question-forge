@@ -1,8 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
+  AGGREGATE_DEFAULT_PERIOD_DAYS,
   AI_PROGRESS_STEPS,
   ERROR_CODES,
   type AiJobResponse,
+  type AnalyzeAggregateRequest,
   type AnalyzeQuestionRequest,
   type ListAiJobsQuery,
   type PaginationMeta,
@@ -13,6 +15,7 @@ import { and, desc, eq, isNull, sql, type SQL } from 'drizzle-orm';
 
 import { AppException } from '../../common/app.exception';
 import { DATABASE } from '../../infra/infra.module';
+import { type AggregateJobInput } from './aggregate-analysis.service';
 import { AiGatewayService } from './ai-gateway.service';
 import { AiQueueService, QUEUE_QUESTION_ANALYSIS } from './ai-queue.service';
 import { PromptSeedService } from './prompts/prompt-seed.service';
@@ -203,8 +206,12 @@ export class AiJobsService {
     if (row.status !== 'failed' && row.status !== 'cancelled') {
       throw new AppException(ERROR_CODES.CONFLICT, '只有失敗或已取消的任務可以重跑。');
     }
-    if (!row.questionId) {
+    // 單題分析一定要有題目；多題分析本來就沒有 questionId，範圍存在 targetRef。
+    if (row.jobType === 'question_analysis' && !row.questionId) {
       throw new AppException(ERROR_CODES.CONFLICT, '這個任務沒有對應的題目，無法重跑。');
+    }
+    if (row.jobType === 'aggregate_analysis' && !row.targetRef) {
+      throw new AppException(ERROR_CODES.CONFLICT, '這個任務缺少分析範圍，無法重跑。');
     }
 
     await this.database.db
@@ -222,19 +229,124 @@ export class AiJobsService {
       .where(eq(schema.aiJobs.id, id));
 
     // 重跑一律強制重新分析：既然上次失敗了，沿用快取沒有意義。
+    const payload =
+      row.jobType === 'aggregate_analysis'
+        ? {
+            ...(row.targetRef as Omit<AggregateJobInput, 'aiJobId' | 'userId' | 'force'>),
+            kind: 'aggregate_analysis' as const,
+            aiJobId: row.id,
+            userId,
+            force: true,
+          }
+        : {
+            aiJobId: row.id,
+            userId,
+            questionId: row.questionId!,
+            userAnswerId: row.userAnswerId,
+            force: true,
+          };
+
     await this.queue.enqueue(
-      {
-        aiJobId: row.id,
-        userId,
-        questionId: row.questionId,
-        userAnswerId: row.userAnswerId,
-        force: true,
-      },
+      payload,
       `${row.idempotencyKey}:retry:${row.attempts + 1}`,
       row.priority,
     );
 
     return this.get(userId, id);
+  }
+
+  /**
+   * 建立多題整合分析任務。
+   *
+   * 與單題分析的差別：沒有 questionId，範圍與期間存進既有但一直沒被用到的
+   * `ai_jobs.target_ref`，因此不需要為此加欄位。
+   */
+  async analyzeAggregate(
+    userId: string,
+    dto: AnalyzeAggregateRequest,
+  ): Promise<AiJobResponse> {
+    const to = dto.to ? new Date(dto.to) : new Date();
+    const from = dto.from
+      ? new Date(dto.from)
+      : new Date(to.getTime() - AGGREGATE_DEFAULT_PERIOD_DAYS * 86_400_000);
+
+    // 範圍 ID 排序後才進雜湊：同一組範圍不該因為送出的順序不同而變成兩個任務。
+    const discriminator = [
+      dto.scopeType,
+      [...dto.scopeRefIds].sort().join(','),
+      from.toISOString(),
+      to.toISOString(),
+      this.gateway.model,
+      this.promptSeed.activeVersion('aggregate_analysis'),
+      dto.force ? String(Date.now()) : 'cached',
+    ].join(':');
+
+    const idempotencyKey = computeAiJobIdempotencyKey({
+      userId,
+      jobType: 'aggregate_analysis',
+      questionId: null,
+      discriminator,
+    });
+
+    const existing = await this.database.db
+      .select()
+      .from(schema.aiJobs)
+      .where(eq(schema.aiJobs.idempotencyKey, idempotencyKey))
+      .limit(1);
+
+    if (existing[0] && existing[0].status !== 'failed' && existing[0].status !== 'cancelled') {
+      return this.toResponse(existing[0]);
+    }
+
+    const targetRef = {
+      scopeType: dto.scopeType,
+      scopeRefIds: dto.scopeRefIds,
+      periodFrom: from.toISOString(),
+      periodTo: to.toISOString(),
+    };
+
+    const inserted = await this.database.db
+      .insert(schema.aiJobs)
+      .values({
+        userId,
+        jobType: 'aggregate_analysis',
+        queue: QUEUE_QUESTION_ANALYSIS,
+        idempotencyKey,
+        questionId: null,
+        targetRef,
+        status: 'pending',
+        progressStep: 'QUEUED',
+        progressPct: 0,
+        priority: dto.priority,
+      })
+      .onConflictDoUpdate({
+        target: schema.aiJobs.idempotencyKey,
+        set: {
+          status: 'pending',
+          progressStep: 'QUEUED',
+          progressPct: 0,
+          errorCode: null,
+          errorMessage: null,
+          finishedAt: null,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+
+    const job = inserted[0]!;
+
+    const bullmqJobId = await this.queue.enqueue(
+      { kind: 'aggregate_analysis', aiJobId: job.id, userId, ...targetRef, force: dto.force },
+      idempotencyKey,
+      dto.priority,
+    );
+
+    await this.database.db
+      .update(schema.aiJobs)
+      .set({ bullmqJobId, updatedAt: new Date() })
+      .where(eq(schema.aiJobs.id, job.id));
+
+    return this.toResponse({ ...job, bullmqJobId });
   }
 
   private async loadQuestion(userId: string, questionId: string) {

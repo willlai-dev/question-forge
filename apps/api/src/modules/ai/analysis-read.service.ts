@@ -2,10 +2,11 @@ import { Inject, Injectable } from '@nestjs/common';
 import {
   ERROR_CODES,
   type AiUsageResponse,
+  type PromptVersionResponse,
   type QuestionAnalysisResponse,
 } from '@repo/contracts';
 import { schema, type DatabaseHandle } from '@repo/db';
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 
 import { AppException } from '../../common/app.exception';
 import { DATABASE } from '../../infra/infra.module';
@@ -205,5 +206,33 @@ export class AnalysisReadService {
       })),
       byStatus,
     };
+  }
+/**
+   * Prompt 版本清單（唯讀）。
+   *
+   * 刻意**不回傳 systemPrompt / userTemplate**：那是注入面的內容，
+   * 顯示出來沒有好處。也刻意不提供切換啟用版本的端點——
+   * 執行期的版本來自程式碼常數，改 prompt 就要改版號並重新部署；
+   * 而且版本是 AI 快取鍵的一部分，切換等於讓既有解析全部失效。
+   */
+  async promptVersions(): Promise<PromptVersionResponse[]> {
+    const rows = await this.database.db
+      .select({
+        id: schema.promptVersions.id,
+        operation: schema.promptVersions.operation,
+        version: schema.promptVersions.version,
+        isActive: schema.promptVersions.isActive,
+        createdAt: schema.promptVersions.createdAt,
+      })
+      .from(schema.promptVersions)
+      .orderBy(asc(schema.promptVersions.operation), asc(schema.promptVersions.version));
+
+    return rows.map((row) => ({
+      id: row.id,
+      operation: row.operation as PromptVersionResponse['operation'],
+      version: row.version,
+      isActive: row.isActive,
+      createdAt: row.createdAt.toISOString(),
+    }));
   }
 }

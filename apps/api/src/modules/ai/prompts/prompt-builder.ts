@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import type { EvidenceSource, ResearchPlan } from '@repo/contracts';
+import type {
+  AggregateStats,
+  EvidenceSource,
+  RepresentativeQuestion,
+  ResearchPlan,
+} from '@repo/contracts';
 
 import { MOCK_CONFLICT_MARKER, MOCK_CONTEXT_MARKER } from '../providers/mock-ai.provider';
 import type { AiChatMessage } from '../providers/ai-provider';
@@ -166,6 +171,146 @@ export class PromptBuilder {
     ];
   }
 
+  /**
+   * ④ 多題整合分析（規格 §11）。
+   *
+   * 送進去的是**程式算好的統計數字**加上代表錯題的摘要，不是整批題目原文——
+   * 規格明訂「不應直接將所有完整題目一次傳給模型」。
+   * 代表錯題只給題幹、使用者選了什麼、正確答案、知識點與錯誤類型，
+   * 不給完整選項與解析：診斷需要的是錯誤的形狀，不是題目本身。
+   */
+  buildAggregateAnalysis(input: {
+    stats: AggregateStats;
+    representativeQuestions: RepresentativeQuestion[];
+    errorTypes: { code: string; name: string; description: string | null }[];
+  }): AiChatMessage[] {
+    const { stats, representativeQuestions, errorTypes } = input;
+
+    const bucketLines = (
+      label: string,
+      rows: { name: string; answered: number; accuracy: number | null }[],
+    ): string[] =>
+      rows.length === 0
+        ? []
+        : [
+            `【${label}】`,
+            ...rows.map(
+              (row) =>
+                `  ${row.name}：作答 ${row.answered} 題，正確率 ${row.accuracy === null ? '無資料' : `${row.accuracy}%`}`,
+            ),
+            '',
+          ];
+
+    const user = [
+      '請依以下統計數據與代表性錯題，產生整體學習診斷。',
+      '',
+      `【統計期間】${stats.period.from} ～ ${stats.period.to}`,
+      `（前後半段以 ${stats.period.mid} 為界；趨勢即後半段減前半段的百分點差）`,
+      '',
+      '【整體】',
+      `  作答 ${stats.overall.totalAnswered} 題，答對 ${stats.overall.correct} 題，` +
+        `正確率 ${stats.overall.accuracy === null ? '無資料' : `${stats.overall.accuracy}%`}`,
+      stats.overall.responseTimeSamples > 0
+        ? `  平均作答時間 ${stats.overall.avgResponseTimeMs} 毫秒` +
+          `（僅 ${stats.overall.responseTimeSamples}/${stats.overall.totalAnswered} 題有記錄時間，` +
+          `樣本不足時請勿據此下結論）`
+        : '  沒有任何作答時間記錄，請勿對作答速度下結論。',
+      '',
+      ...bucketLines('各科目', stats.bySubject),
+      ...bucketLines('各章節', stats.byChapter),
+      ...bucketLines('各題組', stats.byQuestionGroup),
+
+      ...(stats.byKnowledgeTag.length > 0
+        ? [
+            '【各知識點】',
+            ...stats.byKnowledgeTag.map(
+              (tag) =>
+                `  ${tag.name}：作答 ${tag.answered} 題（其中 ${tag.primaryAnswered} 題以主要知識點身分），` +
+                `正確率 ${tag.accuracy === null ? '無資料' : `${tag.accuracy}%`}，` +
+                `趨勢 ${tag.trend === null ? '資料不足，不可判定進步或退步' : `${tag.trend > 0 ? '+' : ''}${tag.trend} 個百分點`}`,
+            ),
+            `  （只有 ${stats.knowledgeTagCoverage.taggedAnswered}/${stats.knowledgeTagCoverage.totalAnswered} 題的作答帶有知識點標籤，` +
+              `知識點層級的結論只涵蓋這部分資料）`,
+            '',
+          ]
+        : ['【各知識點】沒有任何作答帶有知識點標籤，不可對知識點下結論。', '']),
+
+      ...(stats.byErrorType.length > 0
+        ? [
+            '【錯誤類型次數（終身累計，非本期間）】',
+            ...stats.byErrorType.map(
+              (type) => `  ${type.code}（${type.name}）：${type.count} 次，涵蓋 ${type.questionCount} 題`,
+            ),
+            '',
+          ]
+        : []),
+
+      ...(stats.consecutiveWrongStreaks.length > 0
+        ? [
+            '【目前仍連續答錯的知識點】',
+            ...stats.consecutiveWrongStreaks.map(
+              (streak) => `  ${streak.knowledgeTagName}：連續答錯 ${streak.streak} 題且尚未答對`,
+            ),
+            '',
+          ]
+        : []),
+
+      '【近期正確率變化】',
+      `  前半段 ${stats.recentAccuracyChange.previousAnswered} 題，` +
+        `正確率 ${stats.recentAccuracyChange.previous ?? '無資料'}；` +
+        `後半段 ${stats.recentAccuracyChange.currentAnswered} 題，` +
+        `正確率 ${stats.recentAccuracyChange.current ?? '無資料'}`,
+      `  判定：${describeVerdict(stats.recentAccuracyChange.verdict)}`,
+      '',
+      stats.improved.length > 0 ? `【已改善】${stats.improved.join('、')}` : '【已改善】無',
+      stats.notImproved.length > 0 ? `【未改善】${stats.notImproved.join('、')}` : '【未改善】無',
+      '',
+
+      '【代表性錯題】（依統計權重挑選，非全部錯題）',
+      ...representativeQuestions.flatMap((question) => [
+        `  [${question.questionId}] 第 ${question.questionNumber} 題（${question.subjectName}）`,
+        `    題幹：${question.stem}`,
+        `    你選了：${question.lastSelectedAnswers.join('、') || '未作答'}；正確答案：${question.correctAnswers.join('、')}`,
+        `    答錯 ${question.wrongCount} 次／共作答 ${question.attemptCount} 次`,
+        `    知識點：${question.knowledgeTagNames.join('、') || '未標記'}`,
+        `    錯誤類型：${question.errorTypeCodes.join('、') || '未標記'}`,
+      ]),
+      '',
+
+      '【可用的錯誤類型代碼】',
+      ...errorTypes.map((type) => `  ${type.code}：${type.name}${type.description ? ` —— ${type.description}` : ''}`),
+      '',
+      '【可推薦為複習目標的 ID】',
+      '  題目：' + (representativeQuestions.map((q) => q.questionId).join('、') || '無'),
+      '  題組：' + (stats.byQuestionGroup.map((g) => g.id).join('、') || '無'),
+      '  知識點：' + (stats.byKnowledgeTag.map((t) => t.id).join('、') || '無'),
+      '',
+      '限制：',
+      '- weakestKnowledgeTags 的 tagName 只能用上面出現過的知識點名稱。',
+      '- commonErrorTypes 的 errorTypeCode 只能用上面列出的代碼。',
+      '- recommendedPractice 的 refId 只能用上面列出的 ID。',
+      '- reviewPriority 的 rank 必須從 1 開始連續且不重複。',
+      '- 趨勢標示「資料不足」的項目不可以拿來說進步或退步。',
+      this.mockContext({
+        knowledgeTagNames: stats.byKnowledgeTag.map((tag) => tag.name),
+        knowledgeTagAccuracies: stats.byKnowledgeTag.map((tag) => tag.accuracy ?? 0),
+        errorTypeCodes: stats.byErrorType.map((type) => type.code),
+        practiceRefIds: representativeQuestions.map((question) => question.questionId),
+        hasImproved: stats.improved.length > 0,
+        improvedAreas: stats.improved,
+        stagnantAreas: stats.notImproved,
+        totalAnswered: stats.overall.totalAnswered,
+      }),
+    ]
+      .filter((line) => line !== null && line !== undefined)
+      .join('\n');
+
+    return [
+      { role: 'system', content: SYSTEM_PROMPTS.aggregate_analysis },
+      { role: 'user', content: user },
+    ];
+  }
+
   private renderQuestion(question: QuestionContext): string {
     return [
       `【題目】（${question.subjectName}${question.chapterName ? ` / ${question.chapterName}` : ''} / ${question.questionGroupName}）`,
@@ -189,5 +334,19 @@ export class PromptBuilder {
    */
   private mockContext(context: Record<string, unknown>): string {
     return `\n${MOCK_CONTEXT_MARKER}\n${JSON.stringify(context)}`;
+  }
+}
+
+/** 把趨勢判定翻成模型看得懂的一句話，避免它自行詮釋 enum。 */
+function describeVerdict(verdict: AggregateStats['recentAccuracyChange']['verdict']): string {
+  switch (verdict) {
+    case 'improved':
+      return '有明顯進步';
+    case 'not_improved':
+      return '沒有進步（退步或持平在偏低水準）';
+    case 'stable_ok':
+      return '持平且維持在良好水準';
+    case 'insufficient':
+      return '資料不足，不可判定進步或退步';
   }
 }

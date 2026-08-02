@@ -394,7 +394,25 @@ fallback「無法判定」**不可停用** —— 沒有它，AI 判斷不出錯
 | `POST` | `/ai/jobs/:id/retry` | 重跑失敗或已取消的任務 |
 | `GET` | `/questions/:questionId/analysis?userAnswerId=` | 題目解析 + 個人化錯因 |
 | `GET` | `/ai/usage` | 用量統計 |
-| `POST` | `/ai/aggregate-analyses` | 多題整合分析（**Phase 5**） |
+| `GET` | `/ai/prompt-versions` | Prompt 版本清單（**唯讀**，不含 prompt 內文，也不提供切換） |
+| `POST` | `/ai/aggregate-analyses` | 啟動多題整合分析 → `202` + jobId |
+| `GET` | `/ai/aggregate-analyses` | 歷次分析（新到舊） |
+| `GET` | `/ai/aggregate-analyses/latest` | 最近一次分析；沒有時回 `null` 而非 404 |
+| `GET` | `/ai/aggregate-analyses/:id` | 單筆分析（含統計快照） |
+
+### 多題整合分析
+
+與單題分析的差別：
+
+| | 單題 | 多題 |
+|---|---|---|
+| 模型呼叫次數 | 3 次（規劃／證據／解析） | **1 次** |
+| 外部查證 | 有 | 無——輸入是程式算好的統計 |
+| 參照完整性檢查對象 | `sourceId` | 知識點名稱、錯誤類型代碼、可推薦的複習目標 ID |
+| 進度階段 | `ANALYZING_QUESTION` → `SEARCHING_SOURCES` → `SYNTHESIZING_EVIDENCE` → `GENERATING_EXPLANATION` | `COLLECTING_STATS` → `SELECTING_QUESTIONS` → `GENERATING_DIAGNOSIS` |
+
+任務沒有 `questionId`；分析範圍與期間存於 `ai_jobs.target_ref`，重跑時據此還原。
+結果連同 `stats_snapshot` 一併保存，因此每個結論都能回頭核對當時的數字（FR-AGG-05）。
 
 ### 為什麼是非同步
 
@@ -489,10 +507,38 @@ fallback「無法判定」**不可停用** —— 沒有它，AI 判斷不出錯
 | 方法 | 路徑 | 說明 |
 |---|---|---|
 | `GET` | `/stats/overview` | 儀表板摘要 |
-| `GET` | `/stats/accuracy?groupBy=subject\|chapter\|question_group\|knowledge_tag` | 正確率 |
-| `GET` | `/stats/trends?period=30d` | 近期趨勢 |
+| `GET` | `/stats/aggregate?from=&to=` | **多題分析的統計彙總與代表錯題**。合併了原規劃的 `/stats/accuracy` 與 `/stats/trends`：兩者要的維度與趨勢都在同一份回應裡，拆成三個端點只會讓同一份統計被算三次、還可能算出彼此對不起來的數字 |
 | `GET` `PATCH` | `/settings` | 系統設定 |
+| `GET` | `/maintenance/preview` | 預覽待清理項目（只計數） |
+| `POST` | `/maintenance/cleanup` | 執行清理 |
 | `GET` | `/health` | 存活檢查 |
+
+### `GET /stats/aggregate`
+
+**完全不呼叫 AI**，因此整條統計邏輯可以在不消耗任何額度的情況下被端到端驗證。
+省略 `from`／`to` 時預設最近 30 天。回應為 `{ stats, representativeQuestions }`。
+
+所有由作答推導的數字一律套用共用的診斷判準（`apps/api/src/common/diagnostic-scope.ts`）：
+排除暫記作答、軟刪除題目、爭議中與已排除題目，以及未交卷的「交卷後對答案」場次。
+
+需要注意的兩件事：
+
+- **`accuracy` 在分母為 0 時是 `null` 而不是 `0`。** 沒作答不等於考 0 分。
+- **`byKnowledgeTag` 的加總必然大於 `overall`。** 一題可掛 1 主 2 次知識點，
+  一筆作答會在三個標籤桶各算一次——這對「單一標籤的正確率」是正確的。
+  其他維度由不 join 標籤表的獨立查詢計算，因此 `bySubject`／`byChapter`／`byQuestionGroup`
+  的加總**等於** `overall`。扇出程度由 `knowledgeTagCoverage` 揭露。
+
+### `GET` `PATCH` `/settings`
+
+可改的只有作答預設值（存於 `app_settings` 的 `quiz.defaults`）。
+系統資訊為唯讀，**機密一律只回傳「有沒有設定」的布林值，任何情況下都不回傳內容**。
+
+### `POST /maintenance/cleanup`
+
+只刪除「已過期**且**沒有任何證據集合引用」的網頁快取。
+被引用的來源即使過期也保留——否則既有解析的引用會指向不存在的東西（違反驗收 #16）。
+證據集合本身一律不刪：它是既有解析的依據，過期只代表不再重複使用，不代表可以丟棄。
 | `GET` | `/health/deps` | PostgreSQL 與 Redis 狀態 |
 
 > 所有統計查詢一律加上 `WHERE user_answers.is_provisional = false`，確保爭議題不汙染能力診斷（驗收標準 #18）。

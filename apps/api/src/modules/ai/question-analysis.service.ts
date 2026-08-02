@@ -283,7 +283,7 @@ export class QuestionAnalysisService {
           model: this.gateway.model,
         });
 
-        await tx
+        const insertedAnalysis = await tx
           .insert(schema.personalizedMistakeAnalyses)
           .values({
             userId: input.userId,
@@ -305,11 +305,22 @@ export class QuestionAnalysisService {
             requiresHumanReview: final.requiresHumanReview,
             rawOutput: final.mistakeAnalysis,
           })
-          .onConflictDoNothing({ target: schema.personalizedMistakeAnalyses.cacheKey });
+          .onConflictDoNothing({ target: schema.personalizedMistakeAnalyses.cacheKey })
+          .returning({ id: schema.personalizedMistakeAnalyses.id });
 
         // 錯題的錯誤類型標記（source = 'ai'，不覆蓋使用者的手動標記）。
+        //
+        // 有沒有真的插入新的一筆，就是「這是不是一次新的錯誤」的判準：
+        // cacheKey 含使用者的選項與題目版本，force 重跑同一筆錯誤作答會撞到同一個 key、
+        // 插不進去，次數也就不該增加——否則重跑幾次就多算幾次錯。
         if (errorTypeId && !final.mistakeAnalysis.userWasCorrect) {
-          await this.markErrorType(tx, input.userId, input.questionId, errorTypeId);
+          await this.markErrorType(
+            tx,
+            input.userId,
+            input.questionId,
+            errorTypeId,
+            insertedAnalysis.length > 0,
+          );
         }
       }
 
@@ -504,6 +515,7 @@ export class QuestionAnalysisService {
     userId: string,
     questionId: string,
     errorTypeId: string,
+    isNewOccurrence: boolean,
   ): Promise<void> {
     const rows = await tx
       .select({ id: schema.mistakeRecords.id })
@@ -519,10 +531,27 @@ export class QuestionAnalysisService {
     const record = rows[0];
     if (!record) return;
 
+    // occurrence_count 的語意：這一題因為這個錯誤類型而答錯、且已被分析過的次數。
+    // 只有真的是新的一次錯誤才遞增；重跑既有分析只更新時間戳。
+    // 手動標記那條路徑（MistakeErrorTypesService.set）刻意維持不遞增——
+    // 它是「取代」語意，重複按儲存不該被當成又錯了一次。
+    //
+    // sql 片段內的欄位一律寫死資料表名稱：內插 ${schema.x.y} 會算繪成未限定的欄位名。
     await tx
       .insert(schema.mistakeRecordErrorTypes)
       .values({ mistakeRecordId: record.id, errorTypeId, source: 'ai' })
-      .onConflictDoNothing();
+      .onConflictDoUpdate({
+        target: [
+          schema.mistakeRecordErrorTypes.mistakeRecordId,
+          schema.mistakeRecordErrorTypes.errorTypeId,
+        ],
+        set: isNewOccurrence
+          ? {
+              occurrenceCount: sql`mistake_record_error_types.occurrence_count + 1`,
+              updatedAt: new Date(),
+            }
+          : { updatedAt: new Date() },
+      });
 
     await tx
       .update(schema.mistakeRecords)

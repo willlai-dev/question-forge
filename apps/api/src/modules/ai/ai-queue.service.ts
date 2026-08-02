@@ -14,10 +14,20 @@ import type Redis from 'ioredis';
 import { AppException } from '../../common/app.exception';
 import { ENV } from '../../config/env.config';
 import { DATABASE, REDIS } from '../../infra/infra.module';
+import { AggregateAnalysisService, type AggregateJobInput } from './aggregate-analysis.service';
 import { QuestionAnalysisService, type AnalysisJobInput } from './question-analysis.service';
 
 // BullMQ 不允許佇列名稱含冒號（它自己用冒號組 Redis key 的命名空間）。
 export const QUEUE_QUESTION_ANALYSIS = 'ai-question-analysis';
+
+/**
+ * 佇列裡跑的任務。
+ *
+ * 兩種任務共用一條佇列與一個 worker：單一使用者、限流器本來就是全域的，
+ * 第二條佇列只會多一組 Redis 連線而換不到任何東西。
+ * 分派靠 payload 上的 `kind`——舊的單題任務沒有這個欄位，因此以「沒有 kind」判定。
+ */
+export type AiJobPayload = AnalysisJobInput | AggregateJobInput;
 
 /**
  * AI 任務佇列。
@@ -41,6 +51,7 @@ export class AiQueueService implements OnModuleInit, OnApplicationShutdown {
     @Inject(DATABASE) private readonly database: DatabaseHandle,
     @Inject(ENV) private readonly env: Env,
     private readonly analysis: QuestionAnalysisService,
+    private readonly aggregate: AggregateAnalysisService,
   ) {}
 
   onModuleInit(): void {
@@ -77,7 +88,7 @@ export class AiQueueService implements OnModuleInit, OnApplicationShutdown {
    * `idempotencyKey` 同時作為 BullMQ 的 jobId：
    * 資料庫唯一約束與佇列去重雙重保證同一任務不會重複執行（規格 §14）。
    */
-  async enqueue(input: AnalysisJobInput, idempotencyKey: string, priority: number): Promise<string> {
+  async enqueue(input: AiJobPayload, idempotencyKey: string, priority: number): Promise<string> {
     if (!this.queue) {
       throw new AppException(ERROR_CODES.DEPENDENCY_UNAVAILABLE, 'AI 佇列尚未就緒。');
     }
@@ -112,7 +123,7 @@ export class AiQueueService implements OnModuleInit, OnApplicationShutdown {
     }
   }
 
-  private async process(job: Job<AnalysisJobInput>): Promise<void> {
+  private async process(job: Job<AiJobPayload>): Promise<void> {
     const input = job.data;
     const report = async (step: AiProgressStep): Promise<void> => {
       await this.updateJob(input.aiJobId, {
@@ -131,7 +142,12 @@ export class AiQueueService implements OnModuleInit, OnApplicationShutdown {
     });
 
     try {
-      const result = await this.analysis.run(input, report);
+      // 分派靠 payload 的 kind：BullMQ 的 job name 目前沒被檢查，
+      // 而且舊任務可能還躺在佇列裡，用資料本身判定比較穩。
+      const result =
+        isAggregate(input)
+          ? await this.aggregate.run(input, report)
+          : await this.analysis.run(input, report);
       await this.updateJob(input.aiJobId, {
         status: 'completed',
         progressStep: 'COMPLETED',
@@ -170,4 +186,9 @@ export class AiQueueService implements OnModuleInit, OnApplicationShutdown {
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** 舊的單題任務沒有 kind 欄位，因此以「有沒有 kind」判定，而不是反過來。 */
+function isAggregate(input: AiJobPayload): input is AggregateJobInput {
+  return (input as AggregateJobInput).kind === 'aggregate_analysis';
 }

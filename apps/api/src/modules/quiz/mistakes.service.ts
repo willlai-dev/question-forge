@@ -10,9 +10,10 @@ import {
   type QuizSessionResponse,
 } from '@repo/contracts';
 import { schema, type DatabaseHandle } from '@repo/db';
-import { and, asc, desc, eq, isNull, notInArray, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql, type SQL } from 'drizzle-orm';
 
 import { AppException } from '../../common/app.exception';
+import { diagnosticMistakeScope } from '../../common/diagnostic-scope';
 import { DATABASE } from '../../infra/infra.module';
 import { QuizSessionsService } from './quiz-sessions.service';
 
@@ -91,10 +92,9 @@ export class MistakesService {
       .leftJoin(schema.chapters, eq(schema.chapters.id, schema.questions.chapterId))
       .where(
         and(
-          eq(schema.mistakeRecords.userId, userId),
           eq(schema.mistakeRecords.questionId, questionId),
           // 與列表用同一組排除條件，否則列表看不到的題目卻能直接開詳情頁。
-          this.diagnosableQuestion(),
+          diagnosticMistakeScope(userId),
         ),
       )
       .limit(1);
@@ -185,7 +185,7 @@ export class MistakesService {
       })
       .from(schema.mistakeRecords)
       .innerJoin(schema.questions, eq(schema.questions.id, schema.mistakeRecords.questionId))
-      .where(and(eq(schema.mistakeRecords.userId, userId), this.diagnosableQuestion()));
+      .where(diagnosticMistakeScope(userId));
 
     const bySubject = await db
       .select({
@@ -198,7 +198,7 @@ export class MistakesService {
       .from(schema.mistakeRecords)
       .innerJoin(schema.questions, eq(schema.questions.id, schema.mistakeRecords.questionId))
       .innerJoin(schema.subjects, eq(schema.subjects.id, schema.questions.subjectId))
-      .where(and(eq(schema.mistakeRecords.userId, userId), this.diagnosableQuestion()))
+      .where(diagnosticMistakeScope(userId))
       .groupBy(schema.subjects.id, schema.subjects.name)
       .orderBy(desc(sql`count(*)`), asc(schema.subjects.name));
 
@@ -245,28 +245,8 @@ export class MistakesService {
 
   // ------------------------------------------------------------- helpers
 
-  /**
-   * 「這一題可以拿來做能力診斷嗎」——列表、詳情與統計共用同一條判準。
-   *
-   * 題目被軟刪除後，錯題紀錄保留但不再列出：紀錄不刪除，只是沒有東西可以複習。
-   * 待審爭議題與已排除的題目同樣不列入診斷（驗收 #18）。
-   *
-   * 這個過濾必須發生在讀取端，不能只靠 recompute：紀錄一旦建立過，
-   * 之後就算所有作答都被改成暫記，recompute 也不會刪除既有紀錄（FR-MIS-05），
-   * 那筆紀錄會繼續留在錯題本裡，變成「答案還在吵、卻已經算你錯」。
-   */
-  private diagnosableQuestion(): SQL {
-    return and(
-      isNull(schema.questions.deletedAt),
-      notInArray(schema.questions.status, ['disputed', 'excluded']),
-    )!;
-  }
-
   private buildConditions(userId: string, query: ListMistakesQuery): SQL[] {
-    const conditions: SQL[] = [
-      eq(schema.mistakeRecords.userId, userId),
-      this.diagnosableQuestion(),
-    ];
+    const conditions: SQL[] = [diagnosticMistakeScope(userId)];
     if (query.subjectId) conditions.push(eq(schema.questions.subjectId, query.subjectId));
     if (query.chapterId === 'none') conditions.push(isNull(schema.questions.chapterId));
     else if (query.chapterId) conditions.push(eq(schema.questions.chapterId, query.chapterId));

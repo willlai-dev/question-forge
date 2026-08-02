@@ -18,6 +18,12 @@ export default function AiJobsPage() {
   );
 }
 
+const JOB_TYPE_LABEL: Record<string, string> = {
+  question_analysis: '單題分析',
+  aggregate_analysis: '多題整合分析',
+  maintenance: '維護作業',
+};
+
 const STATUS_LABEL: Record<string, { label: string; className: string }> = {
   pending: { label: '排隊中', className: 'bg-muted text-muted-foreground' },
   active: { label: '執行中', className: 'bg-amber-100 text-amber-800' },
@@ -97,7 +103,7 @@ function AiJobsView() {
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">
-                    {job.jobType === 'question_analysis' ? '單題分析' : job.jobType}
+                    {JOB_TYPE_LABEL[job.jobType] ?? job.jobType}
                     {job.servedFromCache && '（命中快取）'}
                   </p>
                   <p className="mt-0.5 text-xs text-muted-foreground">

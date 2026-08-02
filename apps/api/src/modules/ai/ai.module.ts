@@ -3,8 +3,10 @@ import type { Env } from '@repo/contracts';
 
 import { ENV } from '../../config/env.config';
 import { QuizModule } from '../quiz/quiz.module';
+import { StatsModule } from '../stats/stats.module';
 import { TagsModule } from '../tags/tags.module';
-import { AiController, AnswerConflictsController, QuestionAnalysisController } from './ai.controller';
+import { AggregateAnalysisService } from './aggregate-analysis.service';
+import { AiController, AggregateAnalysesController, AnswerConflictsController, QuestionAnalysisController } from './ai.controller';
 import { AiGatewayService } from './ai-gateway.service';
 import { AiJobsService } from './ai-jobs.service';
 import { AiQueueService } from './ai-queue.service';
@@ -32,8 +34,14 @@ import { TavilySearchProvider } from './search/tavily-search.provider';
 @Module({
   // QuizModule 只為了取得 MistakeRecordsService：建立與裁決答案爭議都會改變
   // 「哪些作答算數」，錯題紀錄必須跟著重算。QuizModule 不反向依賴 AiModule，無循環。
-  imports: [TagsModule, QuizModule],
-  controllers: [AiController, QuestionAnalysisController, AnswerConflictsController],
+  // StatsModule 提供 AggregateStatsService：多題分析的輸入是那裡算出來的統計。
+  imports: [TagsModule, QuizModule, StatsModule],
+  controllers: [
+    AiController,
+    QuestionAnalysisController,
+    AnswerConflictsController,
+    AggregateAnalysesController,
+  ],
   providers: [
     MockAiProvider,
     NvidiaAiProvider,
@@ -58,6 +66,7 @@ import { TavilySearchProvider } from './search/tavily-search.provider';
     PromptBuilder,
     PromptSeedService,
     QuestionAnalysisService,
+    AggregateAnalysisService,
     AiQueueService,
     AiJobsService,
     AnalysisReadService,

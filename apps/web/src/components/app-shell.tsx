@@ -12,6 +12,7 @@ const NAV = [
   { href: '/dashboard', label: '概況' },
   { href: '/quiz', label: '作答' },
   { href: '/mistakes', label: '錯題本' },
+  { href: '/analysis/aggregate', label: '學習診斷' },
   { href: '/subjects', label: '科目與章節' },
   { href: '/question-groups', label: '題組' },
   { href: '/questions', label: '題目' },
@@ -19,6 +20,7 @@ const NAV = [
   { href: '/conflicts', label: '答案爭議' },
   { href: '/ai/jobs', label: 'AI 任務' },
   { href: '/imports', label: 'JSON 匯入' },
+  { href: '/settings', label: '設定' },
 ];
 
 /** 已登入頁面的共用外框：導覽列 + 未登入時導回登入頁。 */

@@ -378,3 +378,189 @@ export function buildFinalExplanationSchema(context: FinalExplanationContext) {
     }
   });
 }
+
+// ------------------------------------------------------------ ④ 多題整合分析
+
+/**
+ * 多題整合分析的輸出（docs/AI_ANALYSIS_SCHEMAS.md §5、規格 §11、FR-AGG-04）。
+ *
+ * 與前三階段不同，這裡沒有外部來源可以引用——輸入是程式算好的統計數字，
+ * 因此參照完整性檢查的對象換成「知識點名稱」「錯誤類型代碼」與「可推薦的複習目標」。
+ * AI 只能在這些既有詞彙裡挑，不能自創。
+ */
+const aggregateAnalysisBase = z
+  .object({
+    weakestKnowledgeTags: z
+      .array(
+        z
+          .object({
+            tagName: z.string().min(1),
+            /** 0～100，與輸入統計同單位。 */
+            accuracy: z.number().min(0).max(100),
+            severity: z.enum(['critical', 'high', 'moderate']),
+            evidence: z.string().max(500),
+          })
+          .strict(),
+      )
+      .max(8),
+
+    commonErrorTypes: z
+      .array(
+        z
+          .object({
+            errorTypeCode: z.string().min(1),
+            count: z.number().int().nonnegative(),
+            interpretation: z.string().max(500),
+          })
+          .strict(),
+      )
+      .max(8),
+
+    errorPatterns: z
+      .array(
+        z
+          .object({
+            pattern: z.string().max(500),
+            relatedKnowledgeTags: z.array(z.string()),
+            relatedErrorTypes: z.array(z.string()),
+            explanation: z.string().max(1000),
+          })
+          .strict(),
+      )
+      .max(5),
+
+    reviewPriority: z
+      .array(
+        z
+          .object({
+            rank: z.number().int().positive(),
+            target: z.string().max(200),
+            reason: z.string().max(500),
+          })
+          .strict(),
+      )
+      .max(10),
+
+    recommendedPractice: z
+      .array(
+        z
+          .object({
+            kind: z.enum(['question_group', 'question', 'knowledge_tag']),
+            refId: z.string().min(1),
+            label: z.string().max(200),
+            reason: z.string().max(500),
+          })
+          .strict(),
+      )
+      .max(10),
+
+    improvement: z
+      .object({
+        hasImproved: z.boolean(),
+        improvedAreas: z.array(z.string()).max(10),
+        stagnantAreas: z.array(z.string()).max(10),
+        summary: z.string().max(1500),
+      })
+      .strict(),
+
+    learningSuggestions: z.array(z.string().max(800)).min(1).max(8),
+    analysisBasis: z.string().min(1).max(2000),
+    confidence: confidenceSchema,
+  })
+  .strict();
+
+export const aggregateAnalysisSchema = aggregateAnalysisBase;
+export type AggregateAnalysis = z.infer<typeof aggregateAnalysisBase>;
+
+export interface AggregateAnalysisContext {
+  /** 本次統計中出現過的知識點名稱。 */
+  allowedKnowledgeTagNames: ReadonlySet<string>;
+  /** 系統既有的錯誤類型代碼。 */
+  allowedErrorTypeCodes: ReadonlySet<string>;
+  /** 可以被推薦為複習目標的 ID（代表錯題、題組、知識點）。 */
+  allowedPracticeRefIds: ReadonlySet<string>;
+}
+
+/** 在允許清單裡挑名稱，挑不到就是編的。 */
+function refineNames(
+  names: readonly string[],
+  allowed: ReadonlySet<string>,
+  ctx: z.RefinementCtx,
+  path: (string | number)[],
+  label: string,
+): void {
+  const unknown = names.filter((name) => !allowed.has(name));
+  if (unknown.length > 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path,
+      message: `${label}不在輸入資料中：${unknown.join('、')}`,
+    });
+  }
+}
+
+export function buildAggregateAnalysisSchema(context: AggregateAnalysisContext) {
+  return aggregateAnalysisBase.superRefine((value, ctx) => {
+    refineNames(
+      value.weakestKnowledgeTags.map((tag) => tag.tagName),
+      context.allowedKnowledgeTagNames,
+      ctx,
+      ['weakestKnowledgeTags'],
+      '知識點',
+    );
+
+    refineNames(
+      value.commonErrorTypes.map((type) => type.errorTypeCode),
+      context.allowedErrorTypeCodes,
+      ctx,
+      ['commonErrorTypes'],
+      '錯誤類型代碼',
+    );
+
+    value.errorPatterns.forEach((pattern, index) => {
+      refineNames(
+        pattern.relatedKnowledgeTags,
+        context.allowedKnowledgeTagNames,
+        ctx,
+        ['errorPatterns', index, 'relatedKnowledgeTags'],
+        '知識點',
+      );
+      refineNames(
+        pattern.relatedErrorTypes,
+        context.allowedErrorTypeCodes,
+        ctx,
+        ['errorPatterns', index, 'relatedErrorTypes'],
+        '錯誤類型代碼',
+      );
+    });
+
+    // 推薦的複習目標必須真的存在，否則點下去是死連結。
+    refineNames(
+      value.recommendedPractice.map((item) => item.refId),
+      context.allowedPracticeRefIds,
+      ctx,
+      ['recommendedPractice'],
+      '推薦的複習目標',
+    );
+
+    // 優先順序必須是 1..n 且不重複——「第 1、第 1、第 5 順位」無法執行。
+    const ranks = value.reviewPriority.map((item) => item.rank).sort((a, b) => a - b);
+    const contiguous = ranks.every((rank, index) => rank === index + 1);
+    if (!contiguous) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['reviewPriority'],
+        message: `優先順序必須從 1 開始且連續不重複，收到：${ranks.join('、')}`,
+      });
+    }
+
+    // 說有改善就要講出改善了什麼。
+    if (value.improvement.hasImproved && value.improvement.improvedAreas.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['improvement', 'improvedAreas'],
+        message: 'hasImproved 為 true 時必須列出至少一項已改善的項目',
+      });
+    }
+  });
+}
