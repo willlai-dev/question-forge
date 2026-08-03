@@ -176,6 +176,15 @@ function QuizSessionView() {
                 {reveal.isCorrect ? '答對了' : '答錯了'}．正確答案：
                 {reveal.correctAnswers.join('、')}
               </p>
+              {/*
+                這題的答案正在爭議待審，判定是拿一個系統自己都認為可能有誤的答案算出來的。
+                不講清楚的話，使用者會以為自己確實答錯了。
+              */}
+              {reveal.isProvisional && (
+                <p className="rounded bg-amber-500/10 px-2 py-1 text-amber-700 dark:text-amber-400">
+                  這一題的答案正在爭議待審，上面的判定僅供參考，不會計入能力診斷。
+                </p>
+              )}
               {reveal.explanation ? (
                 <p className="whitespace-pre-wrap leading-relaxed">{reveal.explanation}</p>
               ) : (

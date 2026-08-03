@@ -262,7 +262,15 @@ export class ImportsService {
         ...(dto.questionNumber !== undefined ? { questionNumber: dto.questionNumber ?? null } : {}),
         ...(dto.type !== undefined ? { type: dto.type ?? null } : {}),
         ...(dto.stem !== undefined ? { stem: dto.stem ?? null } : {}),
-        ...(dto.options !== undefined ? { options: dto.options ?? null } : {}),
+        // 選項代號一律轉大寫。驗證階段對小寫代號只發 warning 並說「會統一成大寫」，
+        // 但修正端點原本原樣存回，於是那句承諾在使用者手動修正後就跳票了。
+        ...(dto.options !== undefined
+          ? {
+              options:
+                dto.options?.map((option) => ({ ...option, key: option.key.trim().toUpperCase() })) ??
+                null,
+            }
+          : {}),
         ...(dto.explanation !== undefined ? { explanation: dto.explanation ?? null } : {}),
         ...(dto.sourcePage !== undefined ? { sourcePage: dto.sourcePage ?? null } : {}),
         ...(dto.sourceReference !== undefined
@@ -407,6 +415,8 @@ export class ImportsService {
       );
     }
 
+    await this.assertCommitTarget(userId, dto);
+
     const rawRows = await this.database.db
       .select()
       .from(schema.importBatches)
@@ -432,6 +442,44 @@ export class ImportsService {
       );
     }
 
+    return this.commitInTransaction(userId, batch, raw, dto, staged);
+  }
+
+  /**
+   * 實際寫入正式題庫。
+   *
+   * 包一層是為了把資料庫的唯一鍵違反轉成看得懂的錯誤：
+   * 題號衝突在上傳階段無法預先檢查（那時目標題組還沒決定），
+   * 因此一律由這裡的唯一索引把關——但未經處理的話會以 500 浮出，
+   * 使用者只會看到「伺服器錯誤」而不知道是哪一題的題號撞了。
+   */
+  private async commitInTransaction(
+    userId: string,
+    batch: ImportBatchResponse,
+    raw: Record<string, unknown>,
+    dto: CommitImportRequest,
+    staged: (typeof schema.importQuestions.$inferSelect)[],
+  ): Promise<CommitImportResult> {
+    try {
+      return await this.runCommit(userId, batch, raw, dto, staged);
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new AppException(
+          ERROR_CODES.CONFLICT,
+          '目標題組中已有相同題號的題目。請改匯入到新的題組，或先調整題號。',
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async runCommit(
+    userId: string,
+    batch: ImportBatchResponse,
+    raw: Record<string, unknown>,
+    dto: CommitImportRequest,
+    staged: (typeof schema.importQuestions.$inferSelect)[],
+  ): Promise<CommitImportResult> {
     return this.database.db.transaction(async (tx) => {
       const target = await this.resolveTarget(tx, userId, raw, dto);
       let committed = 0;
@@ -488,7 +536,7 @@ export class ImportsService {
             explanation: row.explanation,
             questionNumber: row.questionNumber,
           },
-          changeReason: `由匯入批次 ${batchId} 建立`,
+          changeReason: `由匯入批次 ${batch.id} 建立`,
           createdBy: userId,
         });
 
@@ -511,10 +559,10 @@ export class ImportsService {
           targetGroupId: target.groupId,
           updatedAt: new Date(),
         })
-        .where(eq(schema.importBatches.id, batchId));
+        .where(eq(schema.importBatches.id, batch.id));
 
       return {
-        batchId,
+        batchId: batch.id,
         committedCount: committed,
         skippedCount: batch.totalCount - committed,
         subjectId: target.subjectId,
@@ -700,6 +748,63 @@ export class ImportsService {
     return { subjectId, chapterId, groupId: created[0]!.id };
   }
 
+  /**
+   * 檢查 commit 指定的匯入目標。
+   *
+   * 這兩個值直接來自請求主體，之前完全沒有驗證就拿去建題組：
+   *   - 沒有檢查科目是否屬於自己（單一使用者情境下影響有限，但這是不該省的檢查）；
+   *   - 沒有檢查章節是否屬於該科目。後者一般使用者就碰得到——
+   *     真正擋下它的是 question_groups 的複合外鍵，但那會以未處理的資料庫錯誤浮出成 500，
+   *     而不是一個看得懂的 409。
+   */
+  private async assertCommitTarget(userId: string, dto: CommitImportRequest): Promise<void> {
+    if (!dto.targetSubjectId && !dto.targetChapterId) return;
+
+    if (dto.targetSubjectId) {
+      const rows = await this.database.db
+        .select({ id: schema.subjects.id })
+        .from(schema.subjects)
+        .where(
+          and(
+            eq(schema.subjects.id, dto.targetSubjectId),
+            eq(schema.subjects.userId, userId),
+            isNull(schema.subjects.deletedAt),
+          ),
+        )
+        .limit(1);
+      if (rows.length === 0) {
+        throw new AppException(ERROR_CODES.SUBJECT_NOT_FOUND, '指定的匯入科目不存在。');
+      }
+    }
+
+    if (dto.targetChapterId) {
+      const rows = await this.database.db
+        .select({ subjectId: schema.chapters.subjectId })
+        .from(schema.chapters)
+        .innerJoin(schema.subjects, eq(schema.subjects.id, schema.chapters.subjectId))
+        .where(
+          and(
+            eq(schema.chapters.id, dto.targetChapterId),
+            eq(schema.subjects.userId, userId),
+            isNull(schema.chapters.deletedAt),
+          ),
+        )
+        .limit(1);
+
+      const chapter = rows[0];
+      if (!chapter) {
+        throw new AppException(ERROR_CODES.CHAPTER_NOT_FOUND, '指定的匯入章節不存在。');
+      }
+      // 沒指定科目時，章節本身就決定了科目，不可能不一致。
+      if (dto.targetSubjectId && chapter.subjectId !== dto.targetSubjectId) {
+        throw new AppException(
+          ERROR_CODES.CHAPTER_SUBJECT_MISMATCH,
+          '指定的章節不屬於指定的科目。',
+        );
+      }
+    }
+  }
+
   private nameOf(value: unknown): string | null {
     if (typeof value !== 'object' || value === null) return null;
     const name = (value as Record<string, unknown>).name;
@@ -753,4 +858,11 @@ export class ImportsService {
       .returning({ id: schema.chapters.id });
     return created[0]!.id;
   }
+}
+
+/** PostgreSQL 23505 = unique_violation。 */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' && error !== null && 'code' in error && error.code === '23505'
+  );
 }

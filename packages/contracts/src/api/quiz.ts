@@ -123,6 +123,14 @@ export const quizRevealSchema = z.object({
   correctAnswers: z.array(z.string()),
   /** 題庫原有的解析；沒有就是 null，系統不編造（FR-Q-08）。 */
   explanation: z.string().nullable(),
+  /**
+   * 這題的答案正在爭議待審（`questions.status = 'disputed'`），因此本次作答是暫記的，
+   * 不計入能力診斷（FR-QUIZ-14）。
+   *
+   * 少了這個欄位，畫面只能拿 `isCorrect` 直接告訴使用者「你答錯了」——
+   * 但那個判定是拿一個**系統自己都認為可能有誤**的答案算出來的。
+   */
+  isProvisional: z.boolean(),
 });
 export type QuizReveal = z.infer<typeof quizRevealSchema>;
 
@@ -182,9 +190,16 @@ export const quizResultItemSchema = z.object({
   questionNumber: z.number().int(),
   type: questionTypeSchema,
   stem: z.string(),
-  options: z.array(z.object({ key: z.string(), text: z.string(), isCorrect: z.boolean() })),
+  /**
+   * `isCorrect` 為 null 代表「這一題還不該揭曉」——不是「這個選項不是答案」。
+   * 用 false 代替 null 等於說謊：前端無法分辨「已知是錯的」與「還不知道」。
+   */
+  options: z.array(
+    z.object({ key: z.string(), text: z.string(), isCorrect: z.boolean().nullable() }),
+  ),
   selectedAnswers: z.array(z.string()).nullable(),
-  correctAnswers: z.array(z.string()),
+  /** 同上：尚未揭曉時為 null，而不是空陣列。 */
+  correctAnswers: z.array(z.string()).nullable(),
   isCorrect: z.boolean().nullable(),
   explanation: z.string().nullable(),
   responseTimeMs: z.number().int().nullable(),

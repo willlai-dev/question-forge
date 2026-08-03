@@ -298,8 +298,22 @@ export class KnowledgeTagsService {
         continue;
       }
 
-      // 兩邊都掛了：主要角色優先保留，然後刪掉來源那一列。
+      // 兩邊都掛了：主要角色優先保留。
       const mergedRole = link.role === 'primary' || existing.role === 'primary' ? 'primary' : 'secondary';
+
+      // **必須先刪來源、再升級目標。** 反過來的話，在「來源是 primary、目標是 secondary」
+      // 的情況下會有一瞬間同一題出現兩列 role='primary'，
+      // 而 question_knowledge_tags_primary_unique 是部分唯一索引（WHERE role = 'primary'），
+      // 會直接擋下並讓整個合併以 500 收場。
+      await tx
+        .delete(schema.questionKnowledgeTags)
+        .where(
+          and(
+            eq(schema.questionKnowledgeTags.questionId, link.questionId),
+            eq(schema.questionKnowledgeTags.knowledgeTagId, sourceId),
+          ),
+        );
+
       if (mergedRole !== existing.role) {
         await tx
           .update(schema.questionKnowledgeTags)
@@ -311,15 +325,6 @@ export class KnowledgeTagsService {
             ),
           );
       }
-
-      await tx
-        .delete(schema.questionKnowledgeTags)
-        .where(
-          and(
-            eq(schema.questionKnowledgeTags.questionId, link.questionId),
-            eq(schema.questionKnowledgeTags.knowledgeTagId, sourceId),
-          ),
-        );
     }
   }
 

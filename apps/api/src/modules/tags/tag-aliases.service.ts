@@ -176,6 +176,10 @@ export class TagAliasesService {
   ): Promise<{ id: string; name: string } | null> {
     const { db } = this.database;
 
+    // 解析結果的唯一用途是「拿去掛到題目上」，因此判準必須與手動掛標籤一致：
+    // merged 與 deprecated 都不可用（見 QuestionTagsService.assertKnowledgeTagsUsable）。
+    // 之前只擋 merged，於是 AI 可以掛上一個已停用的知識點——那正是停用要防止的事。
+    // 解析不到會回 null，呼叫端唯一的後續動作是建立 tag_suggestion 交由人工審核。
     if (tagKind === 'knowledge') {
       const rows = await db
         .select({ id: schema.knowledgeTags.id, name: schema.knowledgeTags.name })
@@ -185,6 +189,7 @@ export class TagAliasesService {
             eq(schema.knowledgeTags.userId, userId),
             eq(schema.knowledgeTags.slug, normalized),
             ne(schema.knowledgeTags.status, 'merged'),
+            ne(schema.knowledgeTags.status, 'deprecated'),
           ),
         )
         .limit(1);
@@ -195,7 +200,12 @@ export class TagAliasesService {
       const rows = await db
         .select({ id: schema.skillTags.id, name: schema.skillTags.name })
         .from(schema.skillTags)
-        .where(eq(schema.skillTags.slug, normalized))
+        .where(
+          and(
+            eq(schema.skillTags.slug, normalized),
+            ne(schema.skillTags.status, 'deprecated'),
+          ),
+        )
         .limit(1);
       return rows[0] ?? null;
     }

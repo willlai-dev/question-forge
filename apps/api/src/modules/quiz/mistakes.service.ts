@@ -108,6 +108,9 @@ export class MistakesService {
       .where(eq(schema.questionOptions.questionId, questionId))
       .orderBy(asc(schema.questionOptions.sortOrder));
 
+    // 只列出算數的作答。totalAttempts 是由非暫記的作答數算出來的
+    // （見 MistakeRecordsService.recompute），這裡若不套同一個條件，
+    // 畫面就會出現「總作答 3 次」上方列著 4 筆紀錄的矛盾。
     const attempts = await db
       .select()
       .from(schema.userAnswers)
@@ -115,6 +118,7 @@ export class MistakesService {
         and(
           eq(schema.userAnswers.userId, userId),
           eq(schema.userAnswers.questionId, questionId),
+          eq(schema.userAnswers.isProvisional, false),
         ),
       )
       .orderBy(desc(schema.userAnswers.answeredAt));

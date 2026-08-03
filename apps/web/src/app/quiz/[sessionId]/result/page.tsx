@@ -98,8 +98,10 @@ function QuizResultView() {
                     key={option.key}
                     className={cn(
                       'flex items-start gap-3 rounded-md border px-3 py-2 text-sm',
-                      option.isCorrect && 'border-emerald-500 bg-emerald-50',
-                      picked && !option.isCorrect && 'border-destructive bg-destructive/5',
+                      // isCorrect 為 null 代表「還不該揭曉」，不是「這個選項是錯的」。
+                      // 少了 === 判斷，未揭曉的題目會把使用者選的那項標成紅色。
+                      option.isCorrect === true && 'border-emerald-500 bg-emerald-50',
+                      picked && option.isCorrect === false && 'border-destructive bg-destructive/5',
                     )}
                   >
                     <span className="font-medium">{option.key}</span>

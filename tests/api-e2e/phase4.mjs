@@ -58,14 +58,47 @@ async function refreshCsrf() {
 }
 
 /** 等任務結束。逾時就回傳最後看到的狀態，讓失敗訊息帶得出診斷資訊。 */
-async function waitForJob(jobId, timeoutMs = 30_000) {
+/** 單題分析的合法進度步驟。與 packages/contracts/src/api/ai.ts 的 enum 一致。 */
+const KNOWN_QUESTION_STEPS = new Set([
+  'QUEUED',
+  'ANALYZING_QUESTION',
+  'SEARCHING_SOURCES',
+  'SYNTHESIZING_EVIDENCE',
+  'GENERATING_EXPLANATION',
+  'SAVING_RESULT',
+  'COMPLETED',
+]);
+
+/**
+ * 等任務結束，並把過程中觀察到的每個進度步驟記錄在 `observedSteps`。
+ *
+ * 預設等 90 秒而非 30 秒：整套 E2E 一輪的模型呼叫數已超過全域限流的 30 RPM，
+ * 連續跑第二輪時必然會有呼叫被限流器擋下、等待下一個分鐘窗口。
+ * 那是限流器正常運作，等太短會把「正在依規則等待」誤判成失敗。
+ *
+ * 刻意**不**斷言「一定要看到某個中間步驟」：Mock 很快，輪詢是否剛好撞上
+ * 某一階段完全取決於時序，那種斷言會變成隨機失敗的測試。
+ * 這裡驗的是可以穩定成立的性質——觀察到的每個步驟都必須是合法值。
+ * 這條抓得到的真實迴歸是：service 回報了 enum 以外的步驟，
+ * 而 AiJobsService.toResponse 會把未知步驟默默降級成 QUEUED，
+ * 進度條就會卡在 0% 而沒有任何人發現。
+ */
+async function waitForJob(jobId, timeoutMs = 90_000) {
   const deadline = Date.now() + timeoutMs;
   let last;
+  const observedSteps = [];
   while (Date.now() < deadline) {
     await sleep(300);
     last = (await call('GET', `/ai/jobs/${jobId}`)).body;
-    if (['completed', 'failed', 'cancelled'].includes(last.status)) return last;
+    if (last?.progressStep && !observedSteps.includes(last.progressStep)) {
+      observedSteps.push(last.progressStep);
+    }
+    if (['completed', 'failed', 'cancelled'].includes(last.status)) {
+      last.observedSteps = observedSteps;
+      return last;
+    }
   }
+  if (last) last.observedSteps = observedSteps;
   return last;
 }
 
@@ -143,12 +176,15 @@ const run = async () => {
     sources[0]?.trustTier === 'official', JSON.stringify(sources.map((s) => s.trustTier)));
   check('有標記哪些來源真的被引用', sources.some((s) => s.isUsed));
 
-  // 引用只能指向實際存在的來源（驗收標準 #16）
-  const sourceIds = new Set(sources.map((s) => s.sourceId));
-  const citations = analysis.body?.personalized?.citations ?? [];
-  check('**所有引用都指向實際存在的來源**',
-    citations.every((c) => sourceIds.has(c.sourceId)),
-    JSON.stringify(citations.map((c) => c.sourceId)));
+  // 這次分析沒有帶作答，因此不會有個人化區塊。
+  //
+  // 原本這裡對 `personalized.citations` 做 every() 檢查並宣稱驗證了驗收 #16——
+  // 但沒帶作答時 personalized 為 null、citations 恆為空陣列，
+  // 而空陣列的 every() 永遠是 true，所以那是一條**永遠通過的空斷言**。
+  // 真正的 #16 驗證移到下方「帶作答」的路徑，那裡引用才真的存在。
+  check('沒有帶作答時不產生個人化區塊', analysis.body?.personalized === null,
+    JSON.stringify(analysis.body?.personalized));
+  check('題目層解析仍附上來源清單', sources.length > 0, `sources=${sources.length}`);
 
   console.log('\n=== SSRF 防護（規格 §17）===');
   check('**內部位址 169.254.169.254 沒有進入證據集合**',
@@ -183,6 +219,62 @@ const run = async () => {
   check('**重複分析完全沒有呼叫模型**', afterCache === beforeCache,
     `${beforeCache} → ${afterCache}`);
 
+  // 上面那組只證明了「同一個任務不會重跑」（冪等鍵相同 → 回到同一個 job），
+  // 並沒有碰到 content_hash 快取本身。這裡刻意用不同的冪等鍵建立**新的**任務：
+  // 帶上 userAnswerId 會讓 discriminator 改變，因此一定是新 job，
+  // 但題目內容沒變，所以應該命中快取、servedFromCache 為 true 且不呼叫模型。
+  // 用另一題（q2）測真正的 content_hash 快取路徑。
+  //
+  // 順序很重要：先「帶作答」分析一次把題目層解析與個人化解析都建立起來，
+  // 再「不帶作答」分析一次。後者的冪等鍵不同（discriminator 含 userAnswerId），
+  // 因此一定是新任務；而題目內容沒變、又不需要個人化解析，
+  // 所以必須命中快取。這才是快取本身，不是「同一個任務不重跑」的冪等。
+  const cacheSession = await call('POST', '/quiz-sessions',
+    { scopes: [{ scopeType: 'question_group', refId: group.body.id }], questionLimit: 50 }, H());
+  let answerForCache = null;
+  for (let p = 1; p <= cacheSession.body.totalQuestions; p += 1) {
+    const q = await call('GET', `/quiz-sessions/${cacheSession.body.id}/questions/${p}`);
+    if (q.body.questionId !== q2.id) continue;
+    const submitted = await call('POST', `/quiz-sessions/${cacheSession.body.id}/answers`,
+      { sessionQuestionId: q.body.sessionQuestionId, selectedAnswers: ['B'] }, H());
+    answerForCache = submitted.body?.answerId ?? null;
+    break;
+  }
+  check('取得 q2 的作答', answerForCache !== null);
+
+  if (answerForCache) {
+    const withAnswer = await call('POST', `/ai/questions/${q2.id}/analyze`,
+      { force: false, userAnswerId: answerForCache }, H());
+    const withAnswerDone = await waitForJob(withAnswer.body.id);
+    check('q2 帶作答的分析完成', withAnswerDone.status === 'completed',
+      String(withAnswerDone.status));
+    check('第一次分析不是來自快取', withAnswerDone.servedFromCache === false,
+      `servedFromCache=${withAnswerDone.servedFromCache}`);
+    // 帶作答的分析必定有個人化區塊，引用才有出口——這也是上面 #16 斷言真正該跑的路徑。
+    const withAnswerAnalysis = await call('GET',
+      `/questions/${q2.id}/analysis?userAnswerId=${answerForCache}`);
+    const personalCitations = withAnswerAnalysis.body?.personalized?.citations ?? [];
+    const q2SourceIds = new Set((withAnswerAnalysis.body?.sources ?? []).map((s) => s.sourceId));
+    check('帶作答的分析確實產生了引用', personalCitations.length > 0,
+      `citations=${personalCitations.length}`);
+    check('**帶作答分析的引用都指向實際存在的來源（驗收 #16）**',
+      personalCitations.length > 0 && personalCitations.every((c) => q2SourceIds.has(c.sourceId)),
+      JSON.stringify(personalCitations.map((c) => c.sourceId)));
+
+    const beforeHash = (await call('GET', '/ai/usage')).body.totalCalls;
+    const cacheJob = await call('POST', `/ai/questions/${q2.id}/analyze`, { force: false }, H());
+    check('不帶作答時的冪等鍵不同，建立的是新任務',
+      cacheJob.body?.id !== withAnswer.body.id,
+      `${cacheJob.body?.id} vs ${withAnswer.body.id}`);
+    const cacheDone = await waitForJob(cacheJob.body.id);
+    check('新任務完成', cacheDone.status === 'completed', String(cacheDone.status));
+    check('**新任務由 content_hash 快取服務（servedFromCache）**',
+      cacheDone.servedFromCache === true, `servedFromCache=${cacheDone.servedFromCache}`);
+    const afterHash = (await call('GET', '/ai/usage')).body.totalCalls;
+    check('**命中快取的新任務沒有呼叫模型**', afterHash === beforeHash,
+      `${beforeHash} → ${afterHash}`);
+  }
+
   console.log('\n=== 題目內容變更會使快取失效 ===');
   const edited = await call('PATCH', `/questions/${q1.id}`, {
     questionNumber: 1,
@@ -214,6 +306,16 @@ const run = async () => {
   check('可列出 AI 任務', jobs.status === 200 && jobs.body.items.length >= 2);
   check('任務含進度步驟與百分比',
     jobs.body.items.every((j) => typeof j.progressStep === 'string' && typeof j.progressPct === 'number'));
+  check('**列出的每個任務的進度步驟都是合法值**',
+    jobs.body.items.every((j) => KNOWN_QUESTION_STEPS.has(j.progressStep)),
+    JSON.stringify([...new Set(jobs.body.items.map((j) => j.progressStep))]));
+  // 進度是真的有在推進，不是從頭到尾停在 QUEUED。
+  check('**分析過程中觀察到的步驟都是合法值**',
+    (done.observedSteps ?? []).every((step) => KNOWN_QUESTION_STEPS.has(step)),
+    JSON.stringify(done.observedSteps));
+  check('**完成的任務停在 COMPLETED 且為 100%**',
+    done.progressStep === 'COMPLETED' && done.progressPct === 100,
+    `${done.progressStep} ${done.progressPct}%`);
 
   const notFound = await call('GET', '/ai/jobs/00000000-0000-4000-8000-000000000000');
   check('不存在的任務 → 404 AI_JOB_NOT_FOUND',
@@ -422,8 +524,10 @@ const run = async () => {
   check('不存在的題目 → 404 QUESTION_NOT_FOUND',
     badQuestion.status === 404 && badQuestion.body.error.code === 'QUESTION_NOT_FOUND');
 
-  const noAnalysis = await call('GET', `/questions/${q2.id}/analysis`);
-  check('沒分析過的題目 → 404', noAnalysis.status === 404);
+  // 用一題全新的：q1 與 q2 都已經在前面被分析過了。
+  const neverAnalyzed = (await makeQuestion(90)).body;
+  const noAnalysis = await call('GET', `/questions/${neverAnalyzed.id}/analysis`);
+  check('沒分析過的題目 → 404', noAnalysis.status === 404, `status=${noAnalysis.status}`);
 
   const noCsrf = await call('POST', `/ai/questions/${q2.id}/analyze`, { force: false });
   check('缺少 CSRF 標頭 → 403', noCsrf.status === 403, `status=${noCsrf.status}`);

@@ -445,6 +445,7 @@ export class QuizSessionsService {
         isCorrect: answer?.isCorrect ?? false,
         correctAnswers: row.sessionQuestion.correctAnswersSnapshot,
         explanation: row.question.explanation,
+        isProvisional: answer?.isProvisional ?? row.question.status === 'disputed',
       }),
     };
   }
@@ -466,6 +467,8 @@ export class QuizSessionsService {
       isCorrect: boolean;
       correctAnswers: string[];
       explanation: string | null;
+      /** 這次作答是否為暫記（題目答案爭議待審）。 */
+      isProvisional: boolean;
     },
   ): QuizReveal | null {
     const finished = session.status !== 'in_progress';
@@ -476,6 +479,7 @@ export class QuizSessionsService {
       isCorrect: input.isCorrect,
       correctAnswers: input.correctAnswers,
       explanation: input.explanation,
+      isProvisional: input.isProvisional,
     };
   }
 
@@ -615,6 +619,7 @@ export class QuizSessionsService {
         isCorrect,
         correctAnswers: target.sessionQuestion.correctAnswersSnapshot,
         explanation: target.explanation,
+        isProvisional: target.questionStatus === 'disputed',
       }),
     };
   }
@@ -748,8 +753,18 @@ export class QuizSessionsService {
       .where(eq(schema.userAnswers.sessionId, sessionId));
     const answerByQuestion = new Map(answers.map((a) => [a.sessionQuestionId, a]));
 
+    const finished = session.status !== 'in_progress';
+
     const items = rows.map((row) => {
       const answer = answerByQuestion.get(row.sessionQuestion.id);
+
+      // 交卷後全部揭曉；還在作答中的話，只揭曉「這一題已經作答過」的。
+      //
+      // after_submit 模式在上面就整個擋掉了，所以這裡處理的是 immediate 模式：
+      // 即答的承諾是「答完這題就看得到這題的答案」，不是「看得到整份考卷的答案」。
+      // 少了這道判斷，作答到一半呼叫 /result 就能一次拿到所有還沒作答題目的答案。
+      const revealed = finished || answer !== undefined;
+
       return {
         position: row.sessionQuestion.position,
         sessionQuestionId: row.sessionQuestion.id,
@@ -760,12 +775,12 @@ export class QuizSessionsService {
         options: (optionsByQuestion.get(row.question.id) ?? []).map((o) => ({
           key: o.key,
           text: o.text,
-          isCorrect: o.isCorrect,
+          isCorrect: revealed ? o.isCorrect : null,
         })),
         selectedAnswers: answer?.selectedAnswers ?? null,
-        correctAnswers: row.sessionQuestion.correctAnswersSnapshot,
+        correctAnswers: revealed ? row.sessionQuestion.correctAnswersSnapshot : null,
         isCorrect: answer?.isCorrect ?? null,
-        explanation: row.question.explanation,
+        explanation: revealed ? row.question.explanation : null,
         responseTimeMs: answer?.responseTimeMs ?? null,
         subjectName: row.subjectName,
         chapterName: row.chapterName,

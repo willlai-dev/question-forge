@@ -404,32 +404,48 @@ export class QuestionAnalysisService {
     ];
 
     for (const suggestion of suggestions) {
-      await tx
-        .insert(schema.tagSuggestions)
-        .values({
-          userId,
-          tagKind: suggestion.kind,
-          suggestedName: suggestion.name,
-          normalizedName: normalizeTagName(suggestion.name),
-          contextQuestionId: questionId,
-          source: 'ai',
-          rationale: suggestion.rationale,
-        })
-        .onConflictDoUpdate({
-          target: [
-            schema.tagSuggestions.userId,
-            schema.tagSuggestions.tagKind,
-            schema.tagSuggestions.normalizedName,
-          ],
-          targetWhere: sql`status = 'pending'`,
-          set: {
-            occurrenceCount: sql`${schema.tagSuggestions.occurrenceCount} + 1`,
-            updatedAt: new Date(),
-          },
-        })
-        .catch(() => {
-          // 建議寫入失敗不該讓整份分析失敗；它是附加價值而非核心結果。
+      // 標籤建議是附加價值，寫失敗不該讓整份分析跟著失敗。
+      //
+      // 但**光是 try/catch 做不到這件事**：PostgreSQL 一旦有語句在交易中失敗，
+      // 整個交易就進入 aborted 狀態，之後每一句都會以
+      // 「current transaction is aborted」失敗。單純吞掉例外只會讓真正的錯誤
+      // 延後在別的地方爆開，反而更難查。
+      //
+      // 巢狀交易在 drizzle 會算繪成 SAVEPOINT，因此失敗時只回捲這一句，
+      // 外層交易仍然是乾淨可用的——那才是「非致命」真正需要的東西。
+      try {
+        await tx.transaction(async (sp) => {
+          await sp
+            .insert(schema.tagSuggestions)
+            .values({
+              userId,
+              tagKind: suggestion.kind,
+              suggestedName: suggestion.name,
+              normalizedName: normalizeTagName(suggestion.name),
+              contextQuestionId: questionId,
+              source: 'ai',
+              rationale: suggestion.rationale,
+            })
+            .onConflictDoUpdate({
+              target: [
+                schema.tagSuggestions.userId,
+                schema.tagSuggestions.tagKind,
+                schema.tagSuggestions.normalizedName,
+              ],
+              targetWhere: sql`status = 'pending'`,
+              set: {
+                occurrenceCount: sql`${schema.tagSuggestions.occurrenceCount} + 1`,
+                updatedAt: new Date(),
+              },
+            });
         });
+      } catch (error) {
+        this.logger.warn(
+          `寫入標籤建議「${suggestion.name}」失敗，已略過：${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
     }
 
     return { primaryTagId, pending };
