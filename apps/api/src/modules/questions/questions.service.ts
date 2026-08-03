@@ -275,6 +275,29 @@ export class QuestionsService {
       return { affected: ids.length };
     }
 
+    if (dto.action === 'setKnowledgeTags') {
+      // 逐題呼叫既有的 QuestionTagsService，而不是自己寫一份批次的 SQL：
+      // 「主要知識點最多一個」「不可用已停用或已合併的標籤」這些規則都在那裡，
+      // 另寫一份等於讓批次路徑繞過單題路徑的所有把關。
+      // 單一使用者、上限 500 題，逐題呼叫的成本可以接受。
+      for (const id of ids) {
+        // set() 是整組取代，連能力類型也會一起清掉。
+        // 這裡只打算改知識點，因此必須把既有的能力類型原樣帶回去，
+        // 否則批次貼知識點會順手把使用者標過的能力類型全部抹掉。
+        const current = await this.questionTags.get(userId, id);
+        const primarySkill = current.skillTags.find((tag) => tag.role === 'primary');
+        await this.questionTags.set(userId, id, {
+          primaryKnowledgeTagId: dto.primaryKnowledgeTagId ?? null,
+          secondaryKnowledgeTagIds: dto.secondaryKnowledgeTagIds ?? [],
+          primarySkillTagId: primarySkill?.id ?? null,
+          secondarySkillTagIds: current.skillTags
+            .filter((tag) => tag.role !== 'primary')
+            .map((tag) => tag.id),
+        });
+      }
+      return { affected: ids.length };
+    }
+
     // move：同時維護反正規化的 subjectId / chapterId，否則列表篩選會失準。
     const group = await this.resolveGroup(userId, dto.targetQuestionGroupId!);
     await db

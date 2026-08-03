@@ -289,6 +289,106 @@ const run = async () => {
     JSON.stringify(first.representativeQuestions.map((q) => q.questionId)) ===
       JSON.stringify(second.representativeQuestions.map((q) => q.questionId)));
 
+  // ------------------------------------------------------------ 範圍限定
+  console.log('\n=== 分析範圍限定確實生效（FR-AGG-01）===');
+  const unscoped = await aggregate();
+
+  const scopedSubject = (await call('GET',
+    `/stats/aggregate?scopeType=subject&scopeRefIds=${subject.id}`)).body;
+  check('限定本科目時，只剩本科目的桶',
+    scopedSubject.stats.bySubject.length === 1 && scopedSubject.stats.bySubject[0].id === subject.id,
+    JSON.stringify(scopedSubject.stats.bySubject.map((r) => r.name)));
+  check('限定科目後總數等於該科目的作答數',
+    scopedSubject.stats.overall.totalAnswered === scopedSubject.stats.bySubject[0].answered,
+    `${scopedSubject.stats.overall.totalAnswered} vs ${scopedSubject.stats.bySubject[0].answered}`);
+
+  // 用一個不存在的科目 ID 限定，應該什麼都撈不到——證明條件真的有進到查詢，
+  // 而不是被無聲忽略。少了這條，「範圍參數其實沒生效」看起來會跟正常一樣。
+  const scopedNone = (await call('GET',
+    '/stats/aggregate?scopeType=subject&scopeRefIds=00000000-0000-4000-8000-000000000000')).body;
+  check('**限定到不存在的科目時統計為空（證明條件真的生效）**',
+    scopedNone.stats.overall.totalAnswered === 0,
+    `totalAnswered=${scopedNone.stats.overall.totalAnswered}`);
+  check('限定到不存在的科目時也沒有代表錯題',
+    scopedNone.representativeQuestions.length === 0);
+
+  const scopedGroup = (await call('GET',
+    `/stats/aggregate?scopeType=question_group&scopeRefIds=${group.id}`)).body;
+  check('限定題組時總數少於不限定',
+    scopedGroup.stats.overall.totalAnswered < unscoped.stats.overall.totalAnswered,
+    `${scopedGroup.stats.overall.totalAnswered} < ${unscoped.stats.overall.totalAnswered}`);
+  check('限定題組時只剩該題組的桶',
+    scopedGroup.stats.byQuestionGroup.length === 1 &&
+      scopedGroup.stats.byQuestionGroup[0].id === group.id,
+    JSON.stringify(scopedGroup.stats.byQuestionGroup.map((r) => r.name)));
+
+  const scopedTag = (await call('GET',
+    `/stats/aggregate?scopeType=knowledge_tag&scopeRefIds=${tagA.id}`)).body;
+  check('限定知識點時只剩掛該知識點的作答',
+    scopedTag.stats.overall.totalAnswered > 0 &&
+      scopedTag.stats.overall.totalAnswered < unscoped.stats.overall.totalAnswered,
+    `${scopedTag.stats.overall.totalAnswered} < ${unscoped.stats.overall.totalAnswered}`);
+  // 知識點是多對多，用 EXISTS 而非 join，因此不會把同一筆作答放大成多列。
+  check('**限定知識點時總數沒有被多對多放大**',
+    scopedTag.stats.overall.totalAnswered ===
+      sumAnswered(scopedTag.stats.bySubject),
+    `${scopedTag.stats.overall.totalAnswered} vs ${sumAnswered(scopedTag.stats.bySubject)}`);
+
+  check('scopeType=all 等同不限定',
+    (await call('GET', '/stats/aggregate?scopeType=all')).body.stats.overall.totalAnswered ===
+      unscoped.stats.overall.totalAnswered);
+
+  // ------------------------------------------------------------ 批次貼標籤
+  console.log('\n=== 批次貼標籤（FR-Q-06）===');
+  const bulkGroup = (await call('POST', '/question-groups',
+    { subjectId: subject.id, name: T('批次標籤題組') }, H())).body;
+  const b1 = await createQuestion(bulkGroup.id, 1, '批次標籤 1');
+  const b2 = await createQuestion(bulkGroup.id, 2, '批次標籤 2');
+
+  // 先給 b1 一個能力類型，等下要確認批次貼知識點不會把它清掉。
+  const skillTags = (await call('GET', '/skill-tags')).body;
+  const someSkill = skillTags[0];
+  await call('PUT', `/questions/${b1.id}/tags`,
+    { primarySkillTagId: someSkill.id, secondarySkillTagIds: [] }, H());
+
+  const bulkTag = await call('POST', '/questions/bulk', {
+    questionIds: [b1.id, b2.id],
+    action: 'setKnowledgeTags',
+    primaryKnowledgeTagId: tagA.id,
+    secondaryKnowledgeTagIds: [tagB.id],
+  }, H());
+  check('批次貼標籤成功', bulkTag.status === 201 || bulkTag.status === 200,
+    `status=${bulkTag.status} ${JSON.stringify(bulkTag.body)}`);
+  check('回報影響 2 題', bulkTag.body?.affected === 2, JSON.stringify(bulkTag.body));
+
+  const b1Tags = (await call('GET', `/questions/${b1.id}/tags`)).body;
+  const b2Tags = (await call('GET', `/questions/${b2.id}/tags`)).body;
+  check('兩題都掛上了主要知識點',
+    b1Tags.knowledgeTags.some((t) => t.id === tagA.id && t.role === 'primary') &&
+    b2Tags.knowledgeTags.some((t) => t.id === tagA.id && t.role === 'primary'));
+  check('兩題都掛上了次要知識點',
+    b1Tags.knowledgeTags.some((t) => t.id === tagB.id && t.role === 'secondary') &&
+    b2Tags.knowledgeTags.some((t) => t.id === tagB.id && t.role === 'secondary'));
+  check('**批次貼知識點不會清掉既有的能力類型**',
+    b1Tags.skillTags.some((t) => t.id === someSkill.id),
+    JSON.stringify(b1Tags.skillTags));
+
+  check('主要與次要指同一個標籤 → 400',
+    (await call('POST', '/questions/bulk', {
+      questionIds: [b1.id],
+      action: 'setKnowledgeTags',
+      primaryKnowledgeTagId: tagA.id,
+      secondaryKnowledgeTagIds: [tagA.id],
+    }, H())).status === 400);
+
+  check('批次帶入不存在的知識點 → 404',
+    (await call('POST', '/questions/bulk', {
+      questionIds: [b1.id],
+      action: 'setKnowledgeTags',
+      primaryKnowledgeTagId: '00000000-0000-4000-8000-000000000000',
+      secondaryKnowledgeTagIds: [],
+    }, H())).status === 404);
+
   // ------------------------------------------------------------ 跨端點一致
   console.log('\n=== 儀表板與錯題頁必須一致 ===');
   check('**/stats/overview 的錯題總數 === /mistakes/stats 的總數**',

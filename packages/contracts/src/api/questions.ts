@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { paginationQuerySchema, uuidSchema } from './common';
-import { questionTagResponseSchema } from './tags';
+import { questionTagResponseSchema, SECONDARY_KNOWLEDGE_TAG_MAX } from './tags';
 
 /**
  * 題目契約。
@@ -148,9 +148,15 @@ export type ListQuestionsQuery = z.infer<typeof listQuestionsQuerySchema>;
 export const bulkQuestionActionSchema = z
   .object({
     questionIds: z.array(uuidSchema).min(1, '至少選擇一題').max(500),
-    action: z.enum(['move', 'delete', 'setReviewRequired']),
+    action: z.enum(['move', 'delete', 'setReviewRequired', 'setKnowledgeTags']),
     targetQuestionGroupId: uuidSchema.optional(),
     reviewRequired: z.boolean().optional(),
+    /**
+     * 批次貼標籤用。語意是**取代**：把選中題目的知識點整組換成這裡指定的，
+     * 不是疊加。疊加會讓「主要知識點最多一個」的規則在批次情境下無從判斷該保留誰。
+     */
+    primaryKnowledgeTagId: uuidSchema.nullish(),
+    secondaryKnowledgeTagIds: z.array(uuidSchema).max(SECONDARY_KNOWLEDGE_TAG_MAX).optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -167,6 +173,23 @@ export const bulkQuestionActionSchema = z
         path: ['reviewRequired'],
         message: '必須指定 reviewRequired 的值',
       });
+    }
+    if (value.action === 'setKnowledgeTags') {
+      const secondary = value.secondaryKnowledgeTagIds ?? [];
+      if (new Set(secondary).size !== secondary.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['secondaryKnowledgeTagIds'],
+          message: '次要知識點不可重複',
+        });
+      }
+      if (value.primaryKnowledgeTagId && secondary.includes(value.primaryKnowledgeTagId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['secondaryKnowledgeTagIds'],
+          message: '次要知識點不可與主要知識點相同',
+        });
+      }
     }
   });
 export type BulkQuestionAction = z.infer<typeof bulkQuestionActionSchema>;

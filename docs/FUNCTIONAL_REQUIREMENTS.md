@@ -40,10 +40,10 @@
 | FR-Q-03 | 單選題正確答案恰為 1 個；複選題正確答案至少 2 個。 | P1 |
 | FR-Q-04 | 題目可跨題組移動。 | P1 |
 | FR-Q-05 | 題目列表支援關鍵字、科目、章節、題組、題型、標籤、`reviewRequired`、狀態篩選與分頁。 | P1 |
-| FR-Q-06 | 支援批次操作：移動題組、批次刪除、批次貼標籤、批次設定 `reviewRequired`。 | P1 |
+| FR-Q-06 ✅ | 支援批次操作：移動題組、批次刪除、批次貼標籤、批次設定 `reviewRequired`。批次貼標籤是**取代**語意，且逐題走 QuestionTagsService，不繞過單題路徑的規則；能力類型會原樣保留。 | P1／P5 |
 | FR-Q-07 | 題目內容變更時寫入 `question_versions` 快照，並更新 `content_hash`。 | P1 |
 | FR-Q-08 | `explanation` 允許為空；系統絕不自動編造解析。 | P1 |
-| FR-Q-09 | 題目可記錄來源（PDF 頁碼、書目、URL）於 `question_sources`。 | P1 |
+| FR-Q-09 ⚠️ | 題目可記錄來源。**部分達成**：實際用 `questions.source_page` 與 `source_reference`，可記 PDF 頁碼與書目文字；URL 與多來源未實作，`question_sources` 表目前無人讀寫（見 ERD 說明）。 | P1 |
 
 ## 4. JSON 匯入
 
@@ -141,7 +141,7 @@
 
 | 編號 | 需求 | 階段 |
 |---|---|---|
-| FR-AGG-01 ✅ | **先由 PostgreSQL 完成統計彙總**，不把所有完整題目一次送給模型。 | P5 |
+| FR-AGG-01 ✅ | **先由 PostgreSQL 完成統計彙總**，不把所有完整題目一次送給模型。分析範圍（`scopeType`／`scopeRefIds`）確實套用到每一支統計查詢；知識點維度用 EXISTS 而非 join，避免多對多把作答數放大。 | P5 |
 | FR-AGG-02 ✅ | 統計項目：各科目／章節／題組／知識點正確率、各錯誤類型次數、平均作答時間、連續答錯次數、重複錯誤概念、近期正確率變化、已改善與未改善項目。 | P5 |
 | FR-AGG-03 ✅ | 依統計挑選代表錯題後才交給 AI。 | P5 |
 | FR-AGG-04 ✅ | 輸出：最薄弱知識點、最常見錯誤類型、關聯錯誤模式、優先複習順序、推薦重練題組／題目、是否有改善、具體學習建議、分析依據與 confidence。 | P5 |
@@ -155,12 +155,12 @@
 
 | 編號 | 需求 | 階段 |
 |---|---|---|
-| FR-JOB-01 | 佇列：`question-analysis`、`aggregate-analysis`、`maintenance`。 | P4 |
+| FR-JOB-01 ⚠️ | 佇列：**實際只有一條** `ai-question-analysis`，兩種 AI 任務依 payload 的 `kind` 分派；維護作業改為手動觸發端點而非佇列。刻意偏離：單一使用者、限流本來就是全域的，第二條佇列只會多一組 Redis 連線而換不到任何東西。 | P4 |
 | FR-JOB-02 | Job 狀態：`pending`、`active`、`completed`、`failed`、`retrying`、`cancelled`。 | P4 |
 | FR-JOB-03 | 進度階段：`ANALYZING_QUESTION`、`SEARCHING_SOURCES`、`SYNTHESIZING_EVIDENCE`、`GENERATING_EXPLANATION`、`SAVING_RESULT`、`COMPLETED`，並寫入 PostgreSQL 以確保可靠。 | P4 |
 | FR-JOB-04 | 前端以 1～2 秒輪詢取得進度；第一版不使用 WebSocket。 | P4 |
 | FR-JOB-05 | 相同 job 具備 idempotency（`idempotency_key` 唯一 + BullMQ jobId 去重）。 | P4 |
-| FR-JOB-06 | 任務優先級：① 使用者等待中的單題分析 ② 使用者要求的多題分析 ③ 匯入後背景分析 ④ 維護工作。 | P4 |
+| FR-JOB-06 ⚠️ | 任務優先級：① 單題分析 ② 多題分析 ④ 維護工作皆可指定 priority。**③ 匯入後背景分析未實作**——匯入模組不觸發任何 AI 任務。刻意未做：一次匯入 200 題會自動產生 600 次模型呼叫，在 30 RPM 的免費額度下等於綁架整條佇列二十分鐘，應該由使用者自己決定何時分析。 | P4 |
 | FR-JOB-07 ✅ | 失敗任務可在管理頁重跑；不得無限重試。多題分析沒有 questionId，範圍存於 `ai_jobs.target_ref`，重跑時據此還原。 | P5 |
 
 ## 9.1 系統設定與維護

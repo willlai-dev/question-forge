@@ -64,12 +64,18 @@ export class AggregateAnalysisService {
     const period = { from: new Date(input.periodFrom), to: new Date(input.periodTo) };
 
     await report('COLLECTING_STATS');
-    const collected = await this.stats.collect(input.userId, period);
+    // 範圍必須真的套用到統計上。只把 scopeType 存進資料表而不套用，
+    // 會產生一份「整個題庫的分析」卻標記成「某科目的分析」的紀錄——
+    // 那比不支援範圍限定更糟。
+    const collected = await this.stats.collect(input.userId, period, {
+      scopeType: input.scopeType,
+      scopeRefIds: input.scopeRefIds,
+    });
 
     if (collected.stats.overall.totalAnswered === 0) {
       throw new AppException(
         ERROR_CODES.VALIDATION_FAILED,
-        '這段期間沒有任何可用於診斷的作答，無法產生整合分析。',
+        '這個範圍與期間內沒有任何可用於診斷的作答，無法產生整合分析。',
       );
     }
 

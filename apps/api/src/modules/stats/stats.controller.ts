@@ -10,6 +10,7 @@ import {
 } from '@repo/contracts';
 import { createZodDto } from 'nestjs-zod';
 
+import { type DiagnosticTarget } from '../../common/diagnostic-scope';
 import { CurrentUser, type AuthenticatedUser } from '../../common/decorators';
 import { AggregateStatsService } from './aggregate-stats.service';
 import { StatsService } from './stats.service';
@@ -53,8 +54,22 @@ export class StatsController {
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: AggregateStatsQueryDto,
   ): Promise<AggregateStatsResponse> {
-    return this.aggregate.collect(user.id, resolvePeriod(query));
+    return this.aggregate.collect(user.id, resolvePeriod(query), resolveTarget(query));
   }
+}
+
+/** 把 query string 的範圍參數轉成統計層看得懂的形式。 */
+export function resolveTarget(query: {
+  scopeType?: string;
+  scopeRefIds?: string;
+}): DiagnosticTarget | undefined {
+  if (!query.scopeType || query.scopeType === 'all') return undefined;
+  const scopeRefIds = (query.scopeRefIds ?? '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
+  if (scopeRefIds.length === 0) return undefined;
+  return { scopeType: query.scopeType as DiagnosticTarget['scopeType'], scopeRefIds };
 }
 
 /** 期間預設為最近 30 天。半開區間 `[from, to)`。 */

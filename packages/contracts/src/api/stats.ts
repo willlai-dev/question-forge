@@ -191,6 +191,10 @@ export const aggregateStatsQuerySchema = z
   .object({
     from: z.string().datetime().optional(),
     to: z.string().datetime().optional(),
+    /** 範圍限定。省略等同 all（整個題庫）。 */
+    scopeType: z.enum(['all', 'subject', 'chapter', 'question_group', 'knowledge_tag']).optional(),
+    /** 逗號分隔的 ID 清單，配合 scopeType 使用。 */
+    scopeRefIds: z.string().optional(),
   })
   .refine(
     (value) => !value.from || !value.to || new Date(value.from) < new Date(value.to),

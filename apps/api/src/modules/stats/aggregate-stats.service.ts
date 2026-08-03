@@ -14,7 +14,12 @@ import {
 import { schema, type DatabaseHandle } from '@repo/db';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 
-import { diagnosableQuestion, diagnosticScope } from '../../common/diagnostic-scope';
+import {
+  diagnosableQuestion,
+  diagnosticScope,
+  targetFilter,
+  type DiagnosticTarget,
+} from '../../common/diagnostic-scope';
 import { DATABASE } from '../../infra/infra.module';
 
 /**
@@ -35,10 +40,11 @@ export class AggregateStatsService {
   async collect(
     userId: string,
     period: { from: Date; to: Date },
+    target?: DiagnosticTarget,
   ): Promise<AggregateStatsResponse> {
     // 期間中點只算一次，綁進每一支查詢，確保所有趨勢數字切在同一瞬間。
     const mid = new Date((period.from.getTime() + period.to.getTime()) / 2);
-    const scope = diagnosticScope(userId, period);
+    const scope = diagnosticScope(userId, period, target);
 
     // 整份統計包在單一唯讀交易內：中途有人交卷會破壞
     // 「各維度加總 === overall」這條測試依賴的不變量。
@@ -55,7 +61,7 @@ export class AggregateStatsService {
           mid,
         );
         const knowledgeTagCoverage = await this.collectTagCoverage(tx, scope, overall.totalAnswered);
-        const byErrorType = await this.collectByErrorType(tx, userId);
+        const byErrorType = await this.collectByErrorType(tx, userId, target);
         const consecutiveWrongStreaks = await this.collectStreaks(tx, scope);
         const recentAccuracyChange = await this.collectRecentChange(tx, scope, mid);
 
@@ -301,7 +307,7 @@ export class AggregateStatsService {
    *
    * **終身統計**：來源沒有逐次發生的時間戳，硬套期間條件只會得到一個假的數字。
    */
-  private async collectByErrorType(tx: Tx, userId: string) {
+  private async collectByErrorType(tx: Tx, userId: string, target?: DiagnosticTarget) {
     const rows = await tx
       .select({
         code: schema.errorTypes.code,
@@ -319,7 +325,7 @@ export class AggregateStatsService {
         schema.errorTypes,
         eq(schema.errorTypes.id, schema.mistakeRecordErrorTypes.errorTypeId),
       )
-      .where(and(eq(schema.mistakeRecords.userId, userId), diagnosableQuestion()))
+      .where(and(eq(schema.mistakeRecords.userId, userId), diagnosableQuestion(), targetFilter(target)))
       .groupBy(schema.errorTypes.id, schema.errorTypes.code, schema.errorTypes.name)
       .orderBy(
         desc(sql`sum(${schema.mistakeRecordErrorTypes.occurrenceCount})`),

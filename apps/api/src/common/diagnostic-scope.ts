@@ -11,7 +11,7 @@
  */
 
 import { schema } from '@repo/db';
-import { and, eq, gte, isNull, lt, notInArray, sql, type SQL } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull, lt, notInArray, sql, type SQL } from 'drizzle-orm';
 
 /** 統計期間。半開區間 `[from, to)`。 */
 export interface DiagnosticPeriod {
@@ -54,13 +54,62 @@ export function countableAnswer(userId: string): SQL {
  * `period` 省略即不限時間。時間用半開區間 `[from, to)`：
  * 相鄰兩期不會重複計算同一筆作答，也沒有 `23:59:59.999` 的邊界問題。
  */
-export function diagnosticScope(userId: string, period?: DiagnosticPeriod): SQL {
+export function diagnosticScope(
+  userId: string,
+  period?: DiagnosticPeriod,
+  target?: DiagnosticTarget,
+): SQL {
   const conditions: SQL[] = [countableAnswer(userId), diagnosableQuestion()];
   if (period) {
     conditions.push(gte(schema.userAnswers.answeredAt, period.from));
     conditions.push(lt(schema.userAnswers.answeredAt, period.to));
   }
+  const narrowed = targetFilter(target);
+  if (narrowed) conditions.push(narrowed);
   return and(...conditions)!;
+}
+
+/** 多題分析的範圍限定。`all` 代表整個題庫。 */
+export interface DiagnosticTarget {
+  scopeType: 'all' | 'subject' | 'chapter' | 'question_group' | 'knowledge_tag';
+  scopeRefIds: readonly string[];
+}
+
+/**
+ * 把分析範圍轉成查詢條件。必須與 `innerJoin(questions)` 併用。
+ *
+ * `all`（或沒指定 ID）回 undefined，呼叫端就不會加任何限制。
+ *
+ * 知識點是唯一需要子查詢的維度：題目與知識點是多對多，直接 join 會讓
+ * 同一筆作答被放大成多列而污染總數。用 EXISTS 只做存在性判斷，不改變列數。
+ *
+ * 子查詢裡的欄位一律寫死資料表名稱，不用 `${schema.x.y}` 內插——
+ * drizzle 會把它算繪成未限定的欄位名，在子查詢中會被解析成子查詢自己那張表的欄位。
+ */
+export function targetFilter(target?: DiagnosticTarget): SQL | undefined {
+  if (!target || target.scopeType === 'all') return undefined;
+  const ids = [...target.scopeRefIds];
+  if (ids.length === 0) return undefined;
+
+  switch (target.scopeType) {
+    case 'subject':
+      return inArray(schema.questions.subjectId, ids);
+    case 'chapter':
+      return inArray(schema.questions.chapterId, ids);
+    case 'question_group':
+      return inArray(schema.questions.questionGroupId, ids);
+    case 'knowledge_tag':
+      return sql`exists (
+        select 1 from question_knowledge_tags qkt
+        where qkt.question_id = questions.id
+          and qkt.knowledge_tag_id in ${ids}
+      )`;
+  }
+}
+
+/** 錯題紀錄版本的範圍限定（錯誤類型統計走 mistake_records，不經 user_answers）。 */
+export function diagnosticMistakeTarget(target?: DiagnosticTarget): SQL | undefined {
+  return targetFilter(target);
 }
 
 /**

@@ -182,6 +182,16 @@ FOREIGN KEY (subject_id, chapter_id)
 ### `question_sources`
 `id`、`question_id FK`、`kind`（`pdf`/`url`/`book`/`other`）、`label`、`page_from`、`page_to`、`url`、`reference_text`
 
+> **目前沒有任何程式碼讀寫這張表。**
+>
+> 實際使用的是 `questions.source_page` 與 `questions.source_reference` 兩個純量欄位——
+> 匯入格式（`QUESTION_IMPORT_SCHEMA.json`）給的就是這兩個值，一題一個來源，
+> 沒有多來源或頁碼範圍的需求。FR-Q-09 因此是**部分達成**：
+> PDF 頁碼與書目文字可以記錄，URL 與多來源不行。
+>
+> 保留這張表而不刪除，是因為刪表屬破壞性變更、而它目前不佔任何成本；
+> 真的需要多來源時直接啟用即可。在那之前，讀 ERD 的人不該以為它已經在用了。
+
 ---
 
 ## 4. 匯入暫存區

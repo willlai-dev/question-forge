@@ -130,15 +130,28 @@
 }
 ```
 
-`POST /questions/bulk` 請求：
+`POST /questions/bulk` 請求（欄位平鋪，沒有 `payload` 包裝層）：
 ```json
 {
   "questionIds": ["uuid", "uuid"],
   "action": "move",
-  "payload": { "targetQuestionGroupId": "uuid" }
+  "targetQuestionGroupId": "uuid"
 }
 ```
-`action` 可為 `move`／`delete`／`addTags`／`removeTags`／`setReviewRequired`。
+
+| `action` | 需要的欄位 | 說明 |
+|---|---|---|
+| `move` | `targetQuestionGroupId` | 同時維護反正規化的 `subjectId`／`chapterId` |
+| `delete` | — | 軟刪除 |
+| `setReviewRequired` | `reviewRequired` | |
+| `setKnowledgeTags` | `primaryKnowledgeTagId`、`secondaryKnowledgeTagIds` | **取代**語意，不是疊加 |
+
+`setKnowledgeTags` 逐題走 `QuestionTagsService`，因此「主要知識點最多一個」
+「不可用已停用或已合併的標籤」等規則與單題路徑完全一致——批次路徑不會繞過任何把關。
+既有的**能力類型會原樣保留**，只有知識點被取代。
+
+> 早期版本的本文件寫的是 `addTags`／`removeTags` 並帶一層 `payload` 包裝，
+> 那兩個 action 與那層包裝從未存在過。此處已改為記述實際契約。
 
 驗證規則（違反回 `400 VALIDATION_FAILED`）：
 - `stem` 不可為空白
@@ -507,7 +520,7 @@ fallback「無法判定」**不可停用** —— 沒有它，AI 判斷不出錯
 | 方法 | 路徑 | 說明 |
 |---|---|---|
 | `GET` | `/stats/overview` | 儀表板摘要 |
-| `GET` | `/stats/aggregate?from=&to=` | **多題分析的統計彙總與代表錯題**。合併了原規劃的 `/stats/accuracy` 與 `/stats/trends`：兩者要的維度與趨勢都在同一份回應裡，拆成三個端點只會讓同一份統計被算三次、還可能算出彼此對不起來的數字 |
+| `GET` | `/stats/aggregate?from=&to=&scopeType=&scopeRefIds=` | **多題分析的統計彙總與代表錯題**。合併了原規劃的 `/stats/accuracy` 與 `/stats/trends`：兩者要的維度與趨勢都在同一份回應裡，拆成三個端點只會讓同一份統計被算三次、還可能算出彼此對不起來的數字 |
 | `GET` `PATCH` | `/settings` | 系統設定 |
 | `GET` | `/maintenance/preview` | 預覽待清理項目（只計數） |
 | `POST` | `/maintenance/cleanup` | 執行清理 |
@@ -517,6 +530,10 @@ fallback「無法判定」**不可停用** —— 沒有它，AI 判斷不出錯
 
 **完全不呼叫 AI**，因此整條統計邏輯可以在不消耗任何額度的情況下被端到端驗證。
 省略 `from`／`to` 時預設最近 30 天。回應為 `{ stats, representativeQuestions }`。
+
+`scopeType` 可為 `all`（預設）／`subject`／`chapter`／`question_group`／`knowledge_tag`，
+搭配逗號分隔的 `scopeRefIds`。範圍會實際套用到**每一支**統計查詢；
+知識點維度用 EXISTS 子查詢而非 join，因此多對多不會把作答數放大。
 
 所有由作答推導的數字一律套用共用的診斷判準（`apps/api/src/common/diagnostic-scope.ts`）：
 排除暫記作答、軟刪除題目、爭議中與已排除題目，以及未交卷的「交卷後對答案」場次。
