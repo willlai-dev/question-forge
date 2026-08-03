@@ -425,6 +425,25 @@ const run = async () => {
   console.log('\n=== 結果與統計 ===');
   const result = await call('GET', `/quiz-sessions/${sid}/result`);
   check('即答模式交卷前即可看結果', result.status === 200);
+
+  // 即答模式的承諾是「答完這題就看得到這題的答案」，不是「看得到整份考卷」。
+  // 交卷前呼叫 /result 時，還沒作答的題目必須維持未揭曉。
+  const unansweredItems = result.body.items.filter((item) => item.selectedAnswers === null);
+  const answeredItems = result.body.items.filter((item) => item.selectedAnswers !== null);
+  check('交卷前：已作答的題目已揭曉答案',
+    answeredItems.length > 0 && answeredItems.every((item) => item.correctAnswers !== null));
+  check('**交卷前：未作答的題目不揭曉正確答案**',
+    unansweredItems.every((item) => item.correctAnswers === null),
+    JSON.stringify(unansweredItems.map((i) => i.correctAnswers)));
+  check('**交卷前：未作答題目的選項不透露對錯**',
+    unansweredItems.every((item) => item.options.every((o) => o.isCorrect === null)));
+  check('**交卷前：未作答的題目不給解析**',
+    unansweredItems.every((item) => item.explanation === null));
+  // 結果頁的 AI 解析要靠 answerId 產生個人化錯因分析。
+  check('已作答的題目帶有 answerId（供個人化 AI 解析使用）',
+    answeredItems.every((item) => typeof item.answerId === 'string'));
+  check('未作答的題目 answerId 為 null',
+    unansweredItems.every((item) => item.answerId === null));
   const scored = await call('POST', `/quiz-sessions/${sid}/submit`, undefined, H());
   check('交卷回傳完整結果', scored.status === 200 && scored.body.items.length === 6);
   const expectedScore = Math.round((scored.body.correctCount / 6) * 10000) / 100;

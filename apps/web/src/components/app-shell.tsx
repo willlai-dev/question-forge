@@ -48,35 +48,47 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen">
+      {/*
+        表頭排成兩列，而不是把標題、導覽、帳號擠在同一列。
+        導覽已有 12 項，光是項目本身加上內距就超過原本 max-w-5xl 的寬度，
+        單列 flex 又沒有 flex-wrap，結果就是擠爆版面並把右側帳號區推出畫面外。
+        拆成兩列之後導覽獨佔整行寬度，再加上 flex-wrap，項目再多也只會往下折。
+      */}
       <header className="border-b">
-        <div className="mx-auto flex max-w-5xl items-center gap-6 px-6 py-3">
-          <span className="font-semibold">題庫分析</span>
-          <nav className="flex gap-1">
-            {NAV.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  'rounded-md px-3 py-1.5 text-sm transition hover:bg-accent',
-                  pathname.startsWith(item.href) && 'bg-accent font-medium',
-                )}
+        <div className="mx-auto max-w-6xl px-6">
+          <div className="flex items-center justify-between gap-4 pt-3">
+            <span className="shrink-0 font-semibold">題庫分析</span>
+            <div className="flex shrink-0 items-center gap-3 text-sm">
+              <span className="text-muted-foreground">{user?.displayName ?? user?.username}</span>
+              <button
+                className="text-muted-foreground underline-offset-4 hover:underline"
+                onClick={() => logout.mutate()}
               >
-                {item.label}
-              </Link>
-            ))}
-          </nav>
-          <div className="ml-auto flex items-center gap-3 text-sm">
-            <span className="text-muted-foreground">{user?.displayName ?? user?.username}</span>
-            <button
-              className="text-muted-foreground underline-offset-4 hover:underline"
-              onClick={() => logout.mutate()}
-            >
-              登出
-            </button>
+                登出
+              </button>
+            </div>
           </div>
+          <nav className="flex flex-wrap gap-1 pb-2.5 pt-2">
+            {NAV.map((item) => {
+              // 用「完全相同」或「後面接 /」判斷，避免 /questions 把 /question-groups 一起點亮。
+              const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    'whitespace-nowrap rounded-md px-3 py-1.5 text-sm transition hover:bg-accent',
+                    active && 'bg-accent font-medium',
+                  )}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
         </div>
       </header>
-      <main className="mx-auto max-w-5xl px-6 py-10">{children}</main>
+      <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
     </div>
   );
 }

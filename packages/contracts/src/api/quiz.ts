@@ -198,6 +198,12 @@ export const quizResultItemSchema = z.object({
     z.object({ key: z.string(), text: z.string(), isCorrect: z.boolean().nullable() }),
   ),
   selectedAnswers: z.array(z.string()).nullable(),
+  /**
+   * 這一題的作答 ID。沒作答時為 null。
+   * 用來讓結果頁的 AI 解析能帶上「使用者選了什麼」，產生個人化的錯因分析——
+   * 少了它只能得到題目層級的通用解析。
+   */
+  answerId: z.string().uuid().nullable(),
   /** 同上：尚未揭曉時為 null，而不是空陣列。 */
   correctAnswers: z.array(z.string()).nullable(),
   isCorrect: z.boolean().nullable(),

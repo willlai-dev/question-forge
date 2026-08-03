@@ -130,12 +130,17 @@ pnpm build
 #      node scripts/create-test-db.mjs --drop
 #   2) 套用 migration（新建的資料庫是空的，少了這步後端起不來）
 #      DATABASE_URL=<把資料庫名稱換成 <db>_test> pnpm --filter @repo/db db:migrate
-#   3) 以 Mock provider 啟動測試後端
+#   3) 以 Mock provider 啟動測試後端（QUEUE_PREFIX 必須與 pnpm dev 不同）
 #      （不用 Mock 會消耗真實 AI 額度，且結果不可重現）
 #      DATABASE_URL=<同上> PORT=4101 AI_PROVIDER=mock SEARCH_PROVIDER=mock \
-#        node apps/api/dist/main.js
+#        QUEUE_PREFIX=qba-e2e node apps/api/dist/main.js
 #   4) 跑測試
 pnpm test:api-e2e
+#
+# QUEUE_PREFIX 為什麼一定要跟 pnpm dev 不同：
+# BullMQ 的任務內容只有一個 aiJobId，實際狀態在 PostgreSQL。兩個後端若連到同一個
+# Redis、用同一個佇列前綴，卻指向不同資料庫，就會互相搶任務——搶到的那個在自己的
+# 資料庫裡找不到那筆 ai_jobs，任務就永遠停在 pending，而且兩邊 log 都不會報錯。
 #
 # 為什麼 2、3 不能對調：種子資料（能力類型、錯誤類型、prompt 版本）是後端
 # 啟動時寫入的。先起後端再重置資料庫，種子就會消失，Phase 3 之後會整批失敗。
@@ -280,3 +285,17 @@ docker pull redis:7-alpine
 - 前端只會取得 `NEXT_PUBLIC_*` 變數；`apps/web/.env.local` 由腳本自動產生且只含公開變數。
 - API 金鑰只存在後端，不會出現在任何前端 bundle 或 API 回應中。
 - 詳見 [SECURITY.md](./docs/SECURITY.md)。
+
+### AI 分析一直停在「排隊中」，log 卻沒有任何錯誤
+
+同時有兩個後端連到同一個 Redis、用同一個 `QUEUE_PREFIX`，但指向**不同的資料庫**時，
+兩邊的 BullMQ worker 會互相搶任務。搶到的那一個在自己的資料庫裡找不到那筆
+`ai_jobs`，於是什麼都不做——任務就永遠停在 `pending`，而且兩邊 log 都不會報錯。
+
+最常見的情境：一邊開著 `pnpm dev`，一邊跑端到端測試的 :4101 後端。
+
+```bash
+pnpm dev:ports        # 看看還有哪些後端在跑
+```
+
+解法是讓它們用不同的 `QUEUE_PREFIX`（測試後端建議 `qba-e2e`）。

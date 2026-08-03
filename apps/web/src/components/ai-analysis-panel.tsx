@@ -7,7 +7,7 @@ import {
 } from '@repo/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Button, Card, ErrorBanner } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
@@ -67,9 +67,15 @@ export function AiAnalysisPanel({
   });
 
   // 任務完成後重新拉解析。
-  if (job.data?.status === 'completed' && analysis.data === undefined && !analysis.isFetching) {
-    void qc.invalidateQueries({ queryKey: ['analysis', questionId] });
-  }
+  //
+  // 一定要放在 effect 裡：在 render 期間呼叫 invalidateQueries 是在 render 中觸發副作用，
+  // 會引發額外的 render 迴圈。原本掛在錯題詳情頁還不容易發生，
+  // 但現在這個面板也出現在作答流程中，每答一題就掛載一次，問題會被放大。
+  useEffect(() => {
+    if (job.data?.status === 'completed') {
+      void qc.invalidateQueries({ queryKey: ['analysis', questionId] });
+    }
+  }, [job.data?.status, qc, questionId]);
 
   const startError = start.error instanceof ApiRequestError ? start.error : null;
   const running =

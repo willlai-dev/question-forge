@@ -59,12 +59,23 @@ export class AiQueueService implements OnModuleInit, OnApplicationShutdown {
     // 與其他 Redis 操作共用會互相卡住。
     const connection = this.redis.duplicate();
 
-    this.queue = new Queue(QUEUE_QUESTION_ANALYSIS, { connection });
+    // **佇列必須依 QUEUE_PREFIX 隔離。**
+    //
+    // 任務內容只是一個 aiJobId，實際狀態在 PostgreSQL。因此兩個連到同一個 Redis、
+    // 用同一個佇列名稱、但指向**不同資料庫**的後端（例如 pnpm dev 的 :4000 與
+    // 端到端測試的 :4101）會互相搶任務：搶到的那個在自己的資料庫裡找不到那筆
+    // ai_jobs，任務就永遠停在 pending，而且兩邊的 log 都不會有錯誤。
+    //
+    // 這個變數原本宣告了卻沒有人用，實際排查時就是這樣被咬到的。
+    const prefix = this.env.QUEUE_PREFIX;
+
+    this.queue = new Queue(QUEUE_QUESTION_ANALYSIS, { connection, prefix });
     this.worker = new Worker(
       QUEUE_QUESTION_ANALYSIS,
-      async (job: Job<AnalysisJobInput>) => this.process(job),
+      async (job: Job<AiJobPayload>) => this.process(job),
       {
         connection: this.redis.duplicate(),
+        prefix,
         // 併發交給 AiConcurrencyLimiter 控制，這裡放行即可，
         // 兩處都設會讓實際併發變得難以推理。
         concurrency: this.env.NVIDIA_MAX_CONCURRENT,

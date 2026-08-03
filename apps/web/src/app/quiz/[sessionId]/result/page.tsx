@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 
+import { AiAnalysisPanel } from '@/components/ai-analysis-panel';
 import { AppShell } from '@/components/app-shell';
 import { Button, Card, ErrorBanner } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
@@ -118,6 +119,14 @@ function QuizResultView() {
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">這一題沒有解析。</p>
+            )}
+
+            {/*
+              只在這題已經揭曉時提供分析入口。correctAnswers 為 null 代表尚未揭曉，
+              那種情況下連入口都不該出現。
+            */}
+            {item.correctAnswers !== null && (
+              <AiAnalysisPanel questionId={item.questionId} userAnswerId={item.answerId} />
             )}
 
             {item.isCorrect === false && (

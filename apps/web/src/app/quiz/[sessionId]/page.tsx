@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
+import { AiAnalysisPanel } from '@/components/ai-analysis-panel';
 import { AppShell } from '@/components/app-shell';
 import { Button, Card, ErrorBanner } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
@@ -188,9 +189,21 @@ function QuizSessionView() {
               {reveal.explanation ? (
                 <p className="whitespace-pre-wrap leading-relaxed">{reveal.explanation}</p>
               ) : (
-                <p className="text-muted-foreground">這一題沒有解析。</p>
+                <p className="text-muted-foreground">
+                  這一題沒有解析——題庫裡沒有的東西，系統不會自己編。需要的話用下方的 AI 深度解析。
+                </p>
               )}
             </div>
+          )}
+
+          {/*
+            即時 AI 深度解析。
+            **只在 reveal 存在時顯示**——reveal 為 null 代表這是交卷後對答案的場次
+            且還沒交卷，此時連分析入口都不該出現，否則等於繞過防洩漏機制。
+            面板本身要按下按鈕才會呼叫模型，不會自動消耗額度。
+          */}
+          {reveal && (
+            <AiAnalysisPanel questionId={data.questionId} userAnswerId={data.answer?.answerId} />
           )}
         </Card>
       )}

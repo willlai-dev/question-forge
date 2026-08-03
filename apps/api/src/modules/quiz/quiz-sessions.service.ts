@@ -778,6 +778,7 @@ export class QuizSessionsService {
           isCorrect: revealed ? o.isCorrect : null,
         })),
         selectedAnswers: answer?.selectedAnswers ?? null,
+        answerId: answer?.id ?? null,
         correctAnswers: revealed ? row.sessionQuestion.correctAnswersSnapshot : null,
         isCorrect: answer?.isCorrect ?? null,
         explanation: revealed ? row.question.explanation : null,
