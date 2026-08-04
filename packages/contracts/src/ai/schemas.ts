@@ -84,6 +84,57 @@ export const researchPlanSchema = z
   });
 export type ResearchPlan = z.infer<typeof researchPlanSchema>;
 
+export interface ResearchPlanContext {
+  /** 這一題有沒有可用的章節筆記（使用者匯入的本地資料源）。 */
+  hasNotes: boolean;
+}
+
+/**
+ * 加上需要外部資訊才能驗證的規劃規則。
+ *
+ * 靜態的 `researchPlanSchema` 仍然是送給模型的 JSON Schema（API 不支援動態規則），
+ * 這裡只用於收到回應後的驗證——與另外兩個階段同一個慣例。
+ */
+export function buildResearchPlanSchema(context: ResearchPlanContext) {
+  return researchPlanSchema.superRefine((value, ctx) => {
+    if (!context.hasNotes) {
+      // 沒有筆記卻宣稱依據 PDF，記錄下來的模式就是假的。
+      if (value.researchMode === 'PDF_KNOWLEDGE') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['researchMode'],
+          message: '這一題沒有可用的章節筆記，不可選 PDF_KNOWLEDGE',
+        });
+      }
+      return;
+    }
+
+    /*
+     * 有筆記時**不可以**是 MODEL_ONLY。
+     *
+     * 這不只是標籤問題：MODEL_ONLY 模式下最終解析的 citations 必須是空陣列，
+     * 於是筆記雖然被送進脈絡卻一句都不能引用——整個功能等於沒有作用，
+     * 而且失效時完全無聲。
+     */
+    if (value.researchMode === 'MODEL_ONLY') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['researchMode'],
+        message: '這一題有章節筆記可引用，不可選 MODEL_ONLY（該模式禁止任何引用）',
+      });
+    }
+
+    // 既用筆記又要上網查，就是 HYBRID 的定義。
+    if (value.needsExternalSearch && value.researchMode !== 'HYBRID') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['researchMode'],
+        message: '同時使用章節筆記與外部搜尋時，researchMode 必須是 HYBRID',
+      });
+    }
+  });
+}
+
 // ------------------------------------------------------------ ② 證據整理
 
 const evidenceSynthesisBase = z

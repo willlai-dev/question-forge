@@ -50,7 +50,11 @@ export interface UserAnswerContext {
  */
 @Injectable()
 export class PromptBuilder {
-  buildResearchPlan(question: QuestionContext, availableTags: string[]): AiChatMessage[] {
+  buildResearchPlan(
+    question: QuestionContext,
+    availableTags: string[],
+    noteCount: number,
+  ): AiChatMessage[] {
     const user = [
       '請規劃這道題目的查證方向。',
       '',
@@ -58,9 +62,14 @@ export class PromptBuilder {
       '',
       `目前題庫可用的知識點：${availableTags.length > 0 ? availableTags.join('、') : '（尚未建立）'}`,
       question.sourceReference ? `題目來源：${question.sourceReference}` : '',
+      // 規劃階段只需要知道「有沒有、有幾段」，正文留到證據階段才送。
+      noteCount > 0
+        ? `本題有 ${noteCount} 段章節筆記可用（使用者自己的教材，一律會帶入）。`
+        : '本題沒有可用的章節筆記。',
       this.mockContext({
         optionKeys: question.options.map((o) => o.key),
         correctAnswers: question.correctAnswers,
+        hasNotes: noteCount > 0,
       }),
     ]
       .filter(Boolean)
@@ -81,13 +90,19 @@ export class PromptBuilder {
       sources.length > 0
         ? sources
             .map((source) =>
-              wrapUntrustedContent(source.sourceId, source.title, source.url, source.content),
+              wrapUntrustedContent(
+                source.sourceId,
+                source.title,
+                source.url,
+                source.content,
+                source.sourceType,
+              ),
             )
             .join('\n\n')
-        : '（本次沒有取得任何外部資料）';
+        : '（本次沒有取得任何資料）';
 
     const user = [
-      '請根據下列外部資料整理證據，判斷題庫標示的答案是否得到支持。',
+      '請根據下列資料整理證據，判斷題庫標示的答案是否得到支持。',
       '',
       this.renderQuestion(question),
       '',
@@ -124,7 +139,13 @@ export class PromptBuilder {
       sources.length > 0
         ? sources
             .map((source) =>
-              wrapUntrustedContent(source.sourceId, source.title, source.url, source.content),
+              wrapUntrustedContent(
+                source.sourceId,
+                source.title,
+                source.url,
+                source.content,
+                source.sourceType,
+              ),
             )
             .join('\n\n')
         : '（本次沒有取得任何外部資料）';

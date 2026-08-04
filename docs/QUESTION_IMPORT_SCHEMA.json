@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://question-bank-analysis.local/schemas/question-import/1.0.0",
-  "title": "題庫匯入格式 v1.0.0",
+  "$id": "https://question-bank-analysis.local/schemas/question-import/1.1.0",
+  "title": "題庫匯入格式 v1.1.0",
   "description": "由外部 LLM 從 PDF 整理後產生、供本系統匯入的選擇題題庫格式。第一版只支援單選題與複選題。",
   "type": "object",
   "additionalProperties": false,
@@ -10,8 +10,8 @@
   "properties": {
     "schemaVersion": {
       "type": "string",
-      "description": "格式版本。目前系統只接受 1.0.0。",
-      "enum": ["1.0.0"]
+      "description": "格式版本。1.1.0 新增 notes（章節筆記）與題目的 relatedNoteIds；1.0.0 仍然接受。",
+      "enum": ["1.0.0", "1.1.0"]
     },
 
     "subject": {
@@ -64,6 +64,40 @@
         "filename": { "type": ["string", "null"], "maxLength": 300 },
         "title": { "type": ["string", "null"], "maxLength": 300 },
         "totalPages": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
+
+
+    "notes": {
+      "type": ["array", "null"],
+      "description": "選填（1.1.0 起）。章節筆記。PDF 中的講義／整理／重點段落放這裡，匯入後會成為該題庫的本地資料源，供 AI 解析引用——比網路搜尋精準，且不消耗額度。**只放 PDF 中真實存在的內容，不要自行撰寫或補充。**",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["noteId", "content"],
+        "properties": {
+          "noteId": {
+            "type": "string",
+            "description": "此份檔案內的唯一識別，建議 N1、N2…。題目用 relatedNoteIds 指向它。",
+            "minLength": 1,
+            "maxLength": 50
+          },
+          "title": { "type": ["string", "null"], "maxLength": 200, "description": "小節標題。" },
+          "content": {
+            "type": "string",
+            "description": "筆記正文原文。一段一個主題，不要把整章塞成一筆——檢索是以整段為單位取用的。",
+            "minLength": 1,
+            "maxLength": 20000
+          },
+          "sourcePage": { "type": ["integer", "null"], "minimum": 1 },
+          "keywords": {
+            "type": "array",
+            "description": "此段的主題詞，供檢索比對。填了會明顯提高命中率。",
+            "maxItems": 20,
+            "items": { "type": "string", "minLength": 1, "maxLength": 50 }
+          }
+        }
       }
     },
 
@@ -178,6 +212,13 @@
           "maxItems": 3,
           "items": { "type": "string", "maxLength": 100 },
           "description": "選填。此題可能考查的知識點提示。僅作為人工建立標籤時的參考，系統不會直接採用為正式標籤。"
+        },
+
+        "relatedNoteIds": {
+          "type": ["array", "null"],
+          "description": "選填（1.1.0 起）。這一題對應到哪幾段筆記，填 notes 的 noteId。填了就會**優先**採用那幾段；沒填則由系統以關鍵字比對挑選。指向不存在的 noteId 會使該題驗證失敗（而不是被靜靜忽略）。",
+          "maxItems": 10,
+          "items": { "type": "string", "minLength": 1, "maxLength": 50 }
         }
       },
 
@@ -209,7 +250,7 @@
 
   "examples": [
     {
-      "schemaVersion": "1.0.0",
+      "schemaVersion": "1.1.0",
       "subject": { "name": "行政法", "code": "ADMIN-LAW", "description": null },
       "chapter": { "name": "第三章 行政行為", "description": null, "sortOrder": 3 },
       "questionGroup": {
@@ -220,6 +261,15 @@
         "notes": null
       },
       "sourceDocument": { "filename": "112地特三等行政法.pdf", "title": null, "totalPages": 18 },
+      "notes": [
+        {
+          "noteId": "N1",
+          "title": "行政處分的要件",
+          "content": "行政處分係行政機關就公法上具體事件所為之決定或其他公權力措施，而對外直接發生法律效果之單方行政行為。",
+          "sourcePage": 3,
+          "keywords": ["行政處分", "公權力措施", "法律效果"]
+        }
+      ],
       "questions": [
         {
           "externalId": "112-local3-admin-Q12",
@@ -238,7 +288,8 @@
           "sourceReference": "第三章 行政行為",
           "reviewRequired": false,
           "reviewReason": null,
-          "knowledgeHints": ["行政處分之定義"]
+          "knowledgeHints": ["行政處分之定義"],
+          "relatedNoteIds": ["N1"]
         },
         {
           "externalId": "112-local3-admin-Q13",

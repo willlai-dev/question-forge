@@ -371,3 +371,138 @@ describe('統計數字', () => {
     expect(result.validCount).toBe(2);
   });
 });
+
+/**
+ * 章節筆記（schemaVersion 1.1.0）。
+ *
+ * 使用者的單章 PDF 通常題目與筆記並存，筆記匯入後成為該題庫的本地資料源。
+ */
+describe('章節筆記', () => {
+  const noteFile = (notes: unknown, questions: unknown[] = [question()]) =>
+    file(questions, { schemaVersion: '1.1.0', notes });
+
+  it('1.0.0 的檔案沒有 notes，照樣通過且 notes 為空陣列', () => {
+    const result = validateImportFile(file([question()]), ctx());
+    expect(result.fileIssues).toEqual([]);
+    expect(result.notes).toEqual([]);
+  });
+
+  it('1.1.0 仍然是支援的版本', () => {
+    const result = validateImportFile(noteFile([]), ctx());
+    expect(result.fileIssues.filter((i) => i.level === 'error')).toEqual([]);
+  });
+
+  it('合法的筆記會被正規化出來', () => {
+    const result = validateImportFile(
+      noteFile([
+        {
+          noteId: 'N1',
+          title: '各類金融商品交易稅',
+          content: '臺指期貨屬股價類期貨，按契約金額課徵十萬分之2。',
+          sourcePage: 12,
+          keywords: ['期貨交易稅', 'REITs'],
+        },
+      ]),
+      ctx(),
+    );
+    expect(result.notes).toHaveLength(1);
+    expect(result.notes[0]).toMatchObject({
+      noteKey: 'N1',
+      title: '各類金融商品交易稅',
+      sourcePage: 12,
+      keywords: ['期貨交易稅', 'REITs'],
+    });
+  });
+
+  it('notes 不是陣列 → 檔案層錯誤', () => {
+    const result = validateImportFile(noteFile('不是陣列'), ctx());
+    expect(result.fileIssues.map((i) => i.code)).toContain(IMPORT_ISSUE_CODES.INVALID_NOTE_SHAPE);
+  });
+
+  it('缺少 noteId → 擋下該筆', () => {
+    const result = validateImportFile(noteFile([{ content: '有內容但沒有 id' }]), ctx());
+    expect(result.fileIssues.map((i) => i.code)).toContain(IMPORT_ISSUE_CODES.INVALID_NOTE_SHAPE);
+    expect(result.notes).toHaveLength(0);
+  });
+
+  it('noteId 重複 → 擋下', () => {
+    const result = validateImportFile(
+      noteFile([
+        { noteId: 'N1', content: '第一段' },
+        { noteId: 'N1', content: '第二段' },
+      ]),
+      ctx(),
+    );
+    expect(result.fileIssues.map((i) => i.code)).toContain(IMPORT_ISSUE_CODES.DUPLICATE_NOTE_ID);
+    expect(result.notes).toHaveLength(1);
+  });
+
+  it('content 為空 → 擋下', () => {
+    const result = validateImportFile(noteFile([{ noteId: 'N1', content: '   ' }]), ctx());
+    expect(result.fileIssues.map((i) => i.code)).toContain(IMPORT_ISSUE_CODES.EMPTY_NOTE_CONTENT);
+  });
+
+  it('content 過長 → 擋下並要求拆分', () => {
+    const result = validateImportFile(
+      noteFile([{ noteId: 'N1', content: 'x'.repeat(20_001) }]),
+      ctx(),
+    );
+    expect(result.fileIssues.map((i) => i.code)).toContain(
+      IMPORT_ISSUE_CODES.NOTE_CONTENT_TOO_LONG,
+    );
+  });
+
+  it('筆記數量超過上限 → 擋下整批', () => {
+    const many = Array.from({ length: 201 }, (_, i) => ({ noteId: `N${i}`, content: '內容' }));
+    const result = validateImportFile(noteFile(many), ctx());
+    expect(result.fileIssues.map((i) => i.code)).toContain(IMPORT_ISSUE_CODES.TOO_MANY_NOTES);
+    expect(result.notes).toHaveLength(0);
+  });
+
+  it('題目可以明確關聯筆記', () => {
+    const result = validateImportFile(
+      noteFile(
+        [{ noteId: 'N1', content: '相關筆記' }],
+        [question({ relatedNoteIds: ['N1'] })],
+      ),
+      ctx(),
+    );
+    expect(result.rows[0]!.relatedNoteIds).toEqual(['N1']);
+    expect(result.rows[0]!.hasError).toBe(false);
+  });
+
+  it('**引用不存在的 noteId → error 而不是靜靜忽略**', () => {
+    // 忽略掉的話，使用者會以為這題掛了筆記，實際上分析時根本沒帶進去
+    // —— 那是最難察覺的那種失效。
+    const result = validateImportFile(
+      noteFile(
+        [{ noteId: 'N1', content: '相關筆記' }],
+        [question({ relatedNoteIds: ['N1', 'N9'] })],
+      ),
+      ctx(),
+    );
+    expect(codesOf(result)).toContain(IMPORT_ISSUE_CODES.UNKNOWN_NOTE_REFERENCE);
+    expect(result.rows[0]!.hasError).toBe(true);
+  });
+
+  it('重複引用同一段筆記會去重，但不算錯誤', () => {
+    const result = validateImportFile(
+      noteFile(
+        [{ noteId: 'N1', content: '相關筆記' }],
+        [question({ relatedNoteIds: ['N1', 'N1'] })],
+      ),
+      ctx(),
+    );
+    expect(result.rows[0]!.relatedNoteIds).toEqual(['N1']);
+    expect(result.rows[0]!.hasError).toBe(false);
+  });
+
+  it('沒有 relatedNoteIds 的題目照常通過', () => {
+    const result = validateImportFile(
+      noteFile([{ noteId: 'N1', content: '相關筆記' }]),
+      ctx(),
+    );
+    expect(result.rows[0]!.relatedNoteIds).toEqual([]);
+    expect(result.rows[0]!.hasError).toBe(false);
+  });
+});

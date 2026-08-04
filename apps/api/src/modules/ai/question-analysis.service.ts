@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
   buildEvidenceSynthesisSchema,
   buildFinalExplanationSchema,
+  buildResearchPlanSchema,
   ERROR_CODES,
   evidenceSynthesisSchema,
   finalExplanationSchema,
@@ -14,7 +15,7 @@ import {
   type FinalExplanation,
   type ResearchPlan,
 } from '@repo/contracts';
-import { computeMistakeAnalysisCacheKey } from '@repo/contracts/server';
+import { computeMistakeAnalysisCacheKey, computeNotesFingerprint } from '@repo/contracts/server';
 import { schema, type Database, type DatabaseHandle } from '@repo/db';
 import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 
@@ -25,6 +26,7 @@ import { MistakeRecordsService } from '../quiz/mistake-records.service';
 import { TagAliasesService } from '../tags/tag-aliases.service';
 import { AiGatewayService } from './ai-gateway.service';
 import { EvidenceService } from './evidence.service';
+import { NotesService } from './notes.service';
 import { PromptBuilder, type AllowedVocabulary, type QuestionContext } from './prompts/prompt-builder';
 import { PromptSeedService } from './prompts/prompt-seed.service';
 
@@ -56,6 +58,7 @@ export class QuestionAnalysisService {
     @Inject(ENV) private readonly env: Env,
     private readonly gateway: AiGatewayService,
     private readonly evidence: EvidenceService,
+    private readonly notes: NotesService,
     private readonly prompts: PromptBuilder,
     private readonly promptSeed: PromptSeedService,
     private readonly tagAliases: TagAliasesService,
@@ -65,8 +68,13 @@ export class QuestionAnalysisService {
   async run(input: AnalysisJobInput, report: ProgressReporter): Promise<{ servedFromCache: boolean }> {
     const question = await this.loadQuestion(input.userId, input.questionId);
 
+    // 筆記在快取判斷之前就要取：它的指紋是快取判準的一部分，
+    // 筆記重新匯入後題目雜湊不會變，少了這個指紋就永遠沿用舊解析。
+    const notes = await this.collectNotes(input.questionId, question);
+    const notesFingerprint = computeNotesFingerprint(notes.fingerprintInputs);
+
     if (!input.force) {
-      const cached = await this.findUsableCache(input, question.contentHash);
+      const cached = await this.findUsableCache(input, question.contentHash, notesFingerprint);
       if (cached) {
         this.logger.log(`題目 ${input.questionId} 命中快取，未呼叫模型`);
         await report('COMPLETED');
@@ -77,11 +85,20 @@ export class QuestionAnalysisService {
     // ① 研究規劃
     await report('ANALYZING_QUESTION');
     const vocabulary = await this.loadVocabulary(input.userId);
-    const plan = await this.planResearch(input, question.context, vocabulary.knowledgeTags);
+    const plan = await this.planResearch(
+      input,
+      question.context,
+      vocabulary.knowledgeTags,
+      notes.sources.length,
+    );
 
     // ② 搜尋與擷取（程式執行，不呼叫模型）
+    //
+    // 筆記排在網頁前面（S1、S2…），因為使用者選擇了「筆記優先」：
+    // 順序本身就是給模型的訊號，而且引用時較前的編號更容易被採用。
     await report('SEARCHING_SOURCES');
-    const sources = plan.needsExternalSearch ? await this.evidence.collect(plan.queries) : [];
+    const webSources = plan.needsExternalSearch ? await this.evidence.collect(plan.queries) : [];
+    const sources = mergeSources(notes.sources, webSources);
 
     // ③ 證據整理
     await report('SYNTHESIZING_EVIDENCE');
@@ -103,6 +120,7 @@ export class QuestionAnalysisService {
       final,
       vocabulary,
       userAnswer,
+      notesFingerprint,
     });
 
     await report('COMPLETED');
@@ -115,12 +133,19 @@ export class QuestionAnalysisService {
     input: AnalysisJobInput,
     question: QuestionContext,
     availableTags: string[],
+    /**
+     * 這一題有幾段筆記可用。
+     *
+     * 規劃階段需要知道它才能正確選 researchMode：有筆記卻標成 WEB_RESEARCH，
+     * 記錄下來的模式就與實際依據的內容不符，事後無法解釋這份解析是怎麼來的。
+     */
+    noteCount: number,
   ): Promise<ResearchPlan> {
     const { data } = await this.gateway.call({
       operation: 'research_plan',
-      messages: this.prompts.buildResearchPlan(question, availableTags),
+      messages: this.prompts.buildResearchPlan(question, availableTags, noteCount),
       requestSchema: researchPlanSchema,
-      responseSchema: researchPlanSchema,
+      responseSchema: buildResearchPlanSchema({ hasNotes: noteCount > 0 }),
       maxTokens: this.env.AI_MAX_TOKENS_PLAN,
       reasoningEffort: this.env.AI_REASONING_EFFORT_PLAN,
       userId: input.userId,
@@ -206,6 +231,7 @@ export class QuestionAnalysisService {
     final: FinalExplanation;
     vocabulary: AllowedVocabulary;
     userAnswer: { selectedAnswers: string[]; isCorrect: boolean } | null;
+    notesFingerprint: string;
   }): Promise<void> {
     const { input, question, plan, sources, synthesis, final, vocabulary, userAnswer } = args;
 
@@ -257,6 +283,7 @@ export class QuestionAnalysisService {
         promptVersionPlan: this.promptSeed.activeVersion('research_plan'),
         promptVersionEvidence: this.promptSeed.activeVersion('evidence_synthesis'),
         promptVersionFinal: this.promptSeed.activeVersion('final_explanation'),
+        notesFingerprint: args.notesFingerprint,
         model: this.gateway.model,
         researchMode: plan.researchMode,
         canonicalExplanation: final.explanation.summary,
@@ -588,11 +615,16 @@ export class QuestionAnalysisService {
    * 模型變了、證據過期了。全部成立才直接沿用，**完全不呼叫模型** ——
    * 這是控制免費額度消耗最有效的手段。
    */
-  private async findUsableCache(input: AnalysisJobInput, contentHash: string): Promise<boolean> {
+  private async findUsableCache(
+    input: AnalysisJobInput,
+    contentHash: string,
+    notesFingerprint: string,
+  ): Promise<boolean> {
     const rows = await this.database.db
       .select({
         id: schema.questionAiEnrichments.id,
         contentHash: schema.questionAiEnrichments.questionContentHash,
+        notesFingerprint: schema.questionAiEnrichments.notesFingerprint,
         model: schema.questionAiEnrichments.model,
         planVersion: schema.questionAiEnrichments.promptVersionPlan,
         evidenceVersion: schema.questionAiEnrichments.promptVersionEvidence,
@@ -616,6 +648,8 @@ export class QuestionAnalysisService {
     if (!row) return false;
 
     if (row.contentHash !== contentHash) return false;
+    // 舊資料沒有這個欄位，視同「當時沒有筆記」；現在有筆記就代表依據變了。
+    if ((row.notesFingerprint ?? 'no-notes') !== notesFingerprint) return false;
     if (row.model !== this.gateway.model) return false;
     if (row.planVersion !== this.promptSeed.activeVersion('research_plan')) return false;
     if (row.evidenceVersion !== this.promptSeed.activeVersion('evidence_synthesis')) return false;
@@ -699,7 +733,31 @@ export class QuestionAnalysisService {
       context,
       contentHash: row.question.contentHash,
       currentVersion: row.question.currentVersion,
+      questionGroupId: row.question.questionGroupId,
     };
+  }
+
+  /**
+   * 取出這一題可用的章節筆記。
+   *
+   * 筆記**一律載入**，不經過研究規劃決定：它是本地資料、免費、不受限流，
+   * 而且針對性遠高於關鍵字搜尋。把免費又精準的東西拿去問模型該不該用，
+   * 只是白白多一次判斷失誤的機會。規劃階段只需決定「還要不要上網」。
+   */
+  private async collectNotes(questionId: string, question: {
+    context: QuestionContext;
+    questionGroupId: string;
+  }) {
+    const questionText = [
+      question.context.stem,
+      ...question.context.options.map((o) => o.text),
+    ].join('\n');
+
+    return this.notes.collectForQuestion({
+      questionId,
+      questionGroupId: question.questionGroupId,
+      questionText,
+    });
   }
 
   /** 組出 AI 可用的詞彙清單。AI 只能從這裡挑，挑不到只能提建議。 */
@@ -792,4 +850,22 @@ export class QuestionAnalysisService {
       .limit(1);
     return rows[0]?.id ?? null;
   }
+}
+
+/**
+ * 合併筆記與網頁來源，並重新編號成連續的 S1、S2…
+ *
+ * 筆記排在前面是使用者選定的「筆記優先」在資料層的體現：順序本身就是給模型的
+ * 訊號。重新編號則是必要的——兩邊各自從 S1 開始編，合併後會撞號，
+ * 而 sourceId 撞號會讓「引用指向哪一份來源」變成不確定，
+ * 連帶讓逐字引用查核比對到錯誤的來源。
+ */
+function mergeSources(
+  noteSources: EvidenceSource[],
+  webSources: EvidenceSource[],
+): EvidenceSource[] {
+  return [...noteSources, ...webSources].map((source, index) => ({
+    ...source,
+    sourceId: `S${index + 1}`,
+  }));
 }

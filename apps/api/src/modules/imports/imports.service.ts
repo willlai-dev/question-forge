@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
-import { Inject, Injectable } from '@nestjs/common';
-import { computeQuestionContentHash } from '@repo/contracts/server';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { computeNoteContentHash, computeQuestionContentHash } from '@repo/contracts/server';
 import {
   ERROR_CODES,
   validateImportFile,
@@ -26,6 +26,8 @@ const COMMITTABLE_STATUSES = ['valid', 'warning', 'fixed'] as const;
 
 @Injectable()
 export class ImportsService {
+  private readonly logger = new Logger(ImportsService.name);
+
   constructor(
     @Inject(DATABASE) private readonly database: DatabaseHandle,
     @Inject(ENV) private readonly env: Env,
@@ -80,6 +82,7 @@ export class ImportsService {
           errorCount: result.errorCount,
           warningCount: result.warningCount,
           reviewRequiredCount: result.reviewRequiredCount,
+          noteCount: result.notes.length,
           rawPayload: parsed as object,
           errorSummary: { fileIssues: result.fileIssues },
           validatedAt: new Date(),
@@ -171,6 +174,7 @@ export class ImportsService {
       warningCount: batch.warningCount,
       reviewRequiredCount: batch.reviewRequiredCount,
       committedCount: batch.committedCount,
+      noteCount: batch.noteCount,
       fileIssues,
       canCommit,
       validatedAt: batch.validatedAt?.toISOString() ?? null,
@@ -453,6 +457,69 @@ export class ImportsService {
    * 因此一律由這裡的唯一索引把關——但未經處理的話會以 500 浮出，
    * 使用者只會看到「伺服器錯誤」而不知道是哪一題的題號撞了。
    */
+  /**
+   * 寫入章節筆記，回傳 noteKey → studyNoteId 的對照。
+   *
+   * 重新匯入同一份 PDF 時以 (題組, noteKey) 為準**更新**既有筆記，而不是新增一筆：
+   * 同一個 key 在同一個題組裡就是同一段筆記，堆兩份只會讓檢索同時撈到新舊兩版。
+   * 更新後 content_hash 跟著變，AI 快取的筆記指紋自然失效，解析才會重新產生。
+   */
+  private async commitNotes(
+    tx: Database,
+    userId: string,
+    target: { subjectId: string; chapterId: string | null; groupId: string },
+    batchId: string,
+    raw: Record<string, unknown>,
+  ): Promise<Map<string, string>> {
+    // 走與驗證階段完全相同的那支函式，避免「驗證通過的東西」與
+    // 「實際寫進去的東西」是兩套解析結果。
+    const notes = validateImportFile(raw, {
+      existingExternalIds: new Set<string>(),
+      existingQuestionNumbers: new Set<number>(),
+      maxQuestions: this.env.IMPORT_MAX_QUESTIONS,
+    }).notes;
+
+    const idByKey = new Map<string, string>();
+    if (notes.length === 0) return idByKey;
+
+    for (const note of notes) {
+      const inserted = await tx
+        .insert(schema.studyNotes)
+        .values({
+          userId,
+          subjectId: target.subjectId,
+          chapterId: target.chapterId,
+          questionGroupId: target.groupId,
+          importBatchId: batchId,
+          noteKey: note.noteKey,
+          title: note.title,
+          content: note.content,
+          sourcePage: note.sourcePage,
+          keywords: note.keywords,
+          contentHash: computeNoteContentHash(note.content),
+        })
+        .onConflictDoUpdate({
+          target: [schema.studyNotes.questionGroupId, schema.studyNotes.noteKey],
+          targetWhere: sql`deleted_at is null`,
+          set: {
+            title: note.title,
+            content: note.content,
+            sourcePage: note.sourcePage,
+            keywords: note.keywords,
+            contentHash: computeNoteContentHash(note.content),
+            importBatchId: batchId,
+            updatedAt: new Date(),
+          },
+        })
+        .returning({ id: schema.studyNotes.id });
+
+      idByKey.set(note.noteKey, inserted[0]!.id);
+    }
+
+    this.logger.log(`匯入批次 ${batchId} 寫入 ${notes.length} 段章節筆記`);
+    return idByKey;
+  }
+
   private async commitInTransaction(
     userId: string,
     batch: ImportBatchResponse,
@@ -482,6 +549,11 @@ export class ImportsService {
   ): Promise<CommitImportResult> {
     return this.database.db.transaction(async (tx) => {
       const target = await this.resolveTarget(tx, userId, raw, dto);
+
+      // 筆記必須先寫入：題目的關聯要指向它們的 id。
+      const noteIdByKey = await this.commitNotes(tx, userId, target, batch.id, raw);
+      const rawQuestions = Array.isArray(raw.questions) ? raw.questions : [];
+
       let committed = 0;
 
       for (const row of staged) {
@@ -539,6 +611,25 @@ export class ImportsService {
           changeReason: `由匯入批次 ${batch.id} 建立`,
           createdBy: userId,
         });
+
+        // 題目與筆記的明確關聯。
+        //
+        // relatedNoteIds 不在預覽頁可編輯的欄位裡，因此以原始檔案為準，
+        // 依 rowIndex 對回去。對不上的 key 在驗證階段已經是 error，
+        // 這裡再過濾一次是為了「就算漏了也不會插出壞掉的關聯」。
+        const rawRow = rawQuestions[row.rowIndex] as Record<string, unknown> | undefined;
+        const linkedNoteIds = (
+          Array.isArray(rawRow?.relatedNoteIds) ? rawRow.relatedNoteIds : []
+        )
+          .map((key) => (typeof key === 'string' ? noteIdByKey.get(key.trim()) : undefined))
+          .filter((id): id is string => id !== undefined);
+
+        if (linkedNoteIds.length > 0) {
+          await tx
+            .insert(schema.questionNoteLinks)
+            .values([...new Set(linkedNoteIds)].map((studyNoteId) => ({ questionId, studyNoteId })))
+            .onConflictDoNothing();
+        }
 
         await tx
           .update(schema.importQuestions)

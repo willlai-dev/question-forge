@@ -4,6 +4,7 @@ import {
   buildAggregateAnalysisSchema,
   buildEvidenceSynthesisSchema,
   buildFinalExplanationSchema,
+  buildResearchPlanSchema,
   researchPlanSchema,
 } from './schemas';
 
@@ -669,5 +670,60 @@ describe('buildAggregateAnalysisSchema', () => {
       somethingExtra: 1,
     });
     expect(result.success).toBe(false);
+  });
+});
+
+/**
+ * 有無章節筆記時的 researchMode 規則。
+ *
+ * 關鍵在 MODEL_ONLY：該模式下最終解析的 citations 必須是空陣列。
+ * 有筆記卻選 MODEL_ONLY，筆記雖然被送進脈絡卻一句都不能引用——
+ * 整個功能等於沒有作用，而且失效時完全無聲。
+ */
+describe('buildResearchPlanSchema：章節筆記', () => {
+  const plan = (over: Record<string, unknown> = {}) => ({
+    needsExternalSearch: true,
+    researchMode: 'WEB_RESEARCH',
+    reason: '需要查證現行條文。',
+    queries: ['查詢一'],
+    preferredDomains: [],
+    preferredSourceTypes: [],
+    freshnessRequired: false,
+    keyClaimsToVerify: ['要查證的論點'],
+    ...over,
+  });
+
+  const withNotes = buildResearchPlanSchema({ hasNotes: true });
+  const noNotes = buildResearchPlanSchema({ hasNotes: false });
+
+  it('沒有筆記 + 上網查 → WEB_RESEARCH 通過', () => {
+    expect(noNotes.safeParse(plan()).success).toBe(true);
+  });
+
+  it('**沒有筆記卻選 PDF_KNOWLEDGE → 擋下**（記錄下來的模式會是假的）', () => {
+    const result = noNotes.safeParse(
+      plan({ needsExternalSearch: false, researchMode: 'PDF_KNOWLEDGE', queries: [], keyClaimsToVerify: [] }),
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it('**有筆記卻選 MODEL_ONLY → 擋下**（該模式禁止任何引用）', () => {
+    const result = withNotes.safeParse(
+      plan({ needsExternalSearch: false, researchMode: 'MODEL_ONLY', queries: [], keyClaimsToVerify: [] }),
+    );
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result)).toContain('禁止任何引用');
+  });
+
+  it('有筆記 + 上網查 → 必須是 HYBRID', () => {
+    expect(withNotes.safeParse(plan({ researchMode: 'WEB_RESEARCH' })).success).toBe(false);
+    expect(withNotes.safeParse(plan({ researchMode: 'HYBRID' })).success).toBe(true);
+  });
+
+  it('有筆記 + 不上網查 → PDF_KNOWLEDGE 通過', () => {
+    const result = withNotes.safeParse(
+      plan({ needsExternalSearch: false, researchMode: 'PDF_KNOWLEDGE', queries: [], keyClaimsToVerify: [] }),
+    );
+    expect(result.success).toBe(true);
   });
 });

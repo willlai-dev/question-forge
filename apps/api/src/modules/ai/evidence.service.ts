@@ -102,7 +102,10 @@ export class EvidenceService {
       totalChars += truncated.length;
 
       sources.push({
+        // 呼叫端合併筆記後會重新編號，這裡的編號只是暫時的。
         sourceId: `S${sources.length + 1}`,
+        sourceType: 'web',
+        studyNoteId: null,
         url: hit.url,
         domain: safeHostname(hit.url),
         title: hit.title,
@@ -218,6 +221,8 @@ export class EvidenceService {
       sources.map((source) => ({
         evidenceSetId,
         sourceId: source.sourceId,
+        sourceType: source.sourceType,
+        studyNoteId: source.studyNoteId,
         url: source.url,
         domain: source.domain,
         title: source.title,
@@ -225,10 +230,11 @@ export class EvidenceService {
         fetchedAt: new Date(source.fetchedAt),
         contentSnippet: source.content.slice(0, 2000),
         contentLength: source.content.length,
-        searchProvider: this.search.name,
+        // 筆記不是查來的，記成搜尋 provider 會讓用量分析把它算成一次外部查詢。
+        searchProvider: source.sourceType === 'note' ? null : this.search.name,
         searchQuery: source.searchQuery,
         rank: source.rank,
-        score: source.score.toFixed(4),
+        score: source.score === null ? null : source.score.toFixed(4),
         trustTier: source.trustTier,
         isUsed: usedSourceIds.has(source.sourceId),
       })),

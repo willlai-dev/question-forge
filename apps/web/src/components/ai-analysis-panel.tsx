@@ -337,16 +337,30 @@ function AnalysisContent({ data }: { data: QuestionAnalysisResponse }) {
                   {source.sourceId}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <a
-                    href={source.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline underline-offset-4"
-                  >
-                    {source.title}
-                  </a>
+                  {/*
+                    筆記沒有 URL，不能渲染成連結。
+                    契約把 url 定為可空正是為了讓這件事在型別上就擋住。
+                  */}
+                  {source.sourceType === 'note' || source.url === null ? (
+                    <span className="font-medium">{source.title}</span>
+                  ) : (
+                    <a
+                      href={source.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline underline-offset-4"
+                    >
+                      {source.title}
+                    </a>
+                  )}
                   <p className="text-xs text-muted-foreground">
-                    {source.domain} · {TRUST_TIER_LABEL[source.trustTier] ?? source.trustTier}
+                    {source.sourceType === 'note' ? (
+                      <span className="text-emerald-700 dark:text-emerald-400">你的章節筆記</span>
+                    ) : (
+                      <>
+                        {source.domain} · {TRUST_TIER_LABEL[source.trustTier] ?? source.trustTier}
+                      </>
+                    )}
                     {source.isUsed ? ' · 已被引用' : ' · 未被引用'}
                   </p>
                 </div>

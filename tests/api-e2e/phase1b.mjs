@@ -314,6 +314,79 @@ const run = async () => {
   const promptDoc = await call('GET', '/imports/prompt');
   check('可取得 PDF 整理 Prompt', promptDoc.status === 200 && promptDoc.body.prompt.includes('只輸出 JSON'));
 
+  // 章節筆記（schemaVersion 1.1.0）。
+  //
+  // 使用者的單章 PDF 通常題目與筆記並存。筆記匯入後成為該題庫的本地資料源，
+  // 供 AI 解析使用——比網路搜尋精準，而且不消耗 API 額度。
+  console.log('\n=== 匯入：章節筆記（schemaVersion 1.1.0）===');
+
+  const noteFile = (notes, questions, overrides = {}) => ({
+    ...importFile(questions, overrides),
+    schemaVersion: '1.1.0',
+    questionGroup: { name: `筆記測試題組-${stamp}`, source: '單元測試', year: 2026 },
+    notes,
+  });
+
+  const badNotes = await upload('/imports', 'bad-notes.json', noteFile(
+    [{ noteId: 'N1', content: '第一段筆記' }],
+    [validQuestion(201, { relatedNoteIds: ['N1', 'N-不存在'] })],
+  ), csrf);
+  check('引用不存在的 noteId → 該題為 error', badNotes.body?.errorCount === 1,
+    `errorCount=${badNotes.body?.errorCount}`);
+  const badNoteRows = await call('GET', `/imports/${badNotes.body.id}/questions`);
+  check('**錯誤碼為 UNKNOWN_NOTE_REFERENCE（不是靜靜忽略）**',
+    badNoteRows.body[0]?.issues.some((i) => i.code === 'UNKNOWN_NOTE_REFERENCE'),
+    JSON.stringify(badNoteRows.body[0]?.issues.map((i) => i.code)));
+
+  const dupNotes = await upload('/imports', 'dup-notes.json', noteFile(
+    [{ noteId: 'N1', content: '第一段' }, { noteId: 'N1', content: '重複的 id' }],
+    [validQuestion(202)],
+  ), csrf);
+  check('noteId 重複 → 檔案層錯誤',
+    dupNotes.body?.fileIssues?.some((i) => i.code === 'DUPLICATE_NOTE_ID'),
+    JSON.stringify(dupNotes.body?.fileIssues?.map((i) => i.code)));
+
+  const notesBatch = await upload('/imports', 'notes.json', noteFile(
+    [
+      {
+        noteId: 'N1',
+        title: '行政處分的要件',
+        content: '行政處分須為行政機關就公法上具體事件所為之單方行政行為，且對外直接發生法律效果。拆除命令即屬之。',
+        sourcePage: 12,
+        keywords: ['行政處分', '拆除命令'],
+      },
+      {
+        noteId: 'N2',
+        title: '行政指導',
+        content: '行政指導不具法律拘束力，相對人得不遵從，因此不是行政處分。',
+        sourcePage: 14,
+        keywords: ['行政指導'],
+      },
+    ],
+    [validQuestion(203, { relatedNoteIds: ['N1'] }), validQuestion(204)],
+  ), csrf);
+  check('含筆記的檔案通過驗證', notesBatch.body?.status === 'validated',
+    `status=${notesBatch.body?.status} ${JSON.stringify(notesBatch.body?.fileIssues)}`);
+  check('批次回報筆記數', notesBatch.body?.noteCount === 2, `noteCount=${notesBatch.body?.noteCount}`);
+
+  const notesCommit = await call('POST', `/imports/${notesBatch.body.id}/commit`, {}, H());
+  check('含筆記的檔案 commit 成功', notesCommit.status === 200 && notesCommit.body?.committedCount === 2,
+    JSON.stringify(notesCommit.body));
+
+  // 重新匯入同一份 PDF：同一個 (題組, noteKey) 應該是更新而不是再長一筆，
+  // 否則檢索會同時撈到新舊兩版。
+  const reimport = await upload('/imports', 'notes-again.json', noteFile(
+    [{ noteId: 'N1', title: '行政處分的要件（修訂）', content: '修訂後的內容：行政處分必須對外直接發生法律效果。' }],
+    [validQuestion(205)],
+  ), csrf);
+  const reimportCommit = await call('POST', `/imports/${reimport.body.id}/commit`, {
+    targetGroupId: notesCommit.body.questionGroupId,
+  }, H());
+  check('重新匯入同一題組成功', reimportCommit.status === 200, JSON.stringify(reimportCommit.body));
+
+  check('1.0.0 的舊檔案仍然匯得進來（新欄位全選填）',
+    (await upload('/imports', 'legacy.json', importFile([validQuestion(206)]), csrf)).body?.status === 'validated');
+
   console.log(`\n===== 通過 ${pass} 項，失敗 ${fail} 項 =====`);
   process.exit(fail === 0 ? 0 : 1);
 };

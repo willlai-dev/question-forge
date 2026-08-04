@@ -41,8 +41,11 @@ export class MockAiProvider implements AiProvider {
       case 'research_plan':
         return {
           needsExternalSearch: true,
-          researchMode: 'WEB_RESEARCH',
-          reason: '（模擬）這題涉及具體法規條文，需要查證現行條文內容。',
+          // 有章節筆記時必須是 HYBRID（筆記 + 網路），否則語意驗證會擋下。
+          researchMode: context.hasNotes ? 'HYBRID' : 'WEB_RESEARCH',
+          reason: context.hasNotes
+            ? '（模擬）本題有章節筆記，另需查證現行條文以補充筆記未涵蓋的部分。'
+            : '（模擬）這題涉及具體法規條文，需要查證現行條文內容。',
           queries: ['模擬查詢：題目關鍵概念'],
           preferredDomains: ['law.moj.gov.tw'],
           preferredSourceTypes: ['official'],
@@ -235,6 +238,8 @@ interface MockContext {
   expectConflict: boolean;
   /** 題幹含捏造引用標記時為 true，用來證明原文查核真的會擋下來。 */
   expectFabricatedQuote: boolean;
+  /** 這一題有沒有章節筆記。決定 researchMode 能不能選 WEB_RESEARCH。 */
+  hasNotes: boolean;
 
   // --- 多題整合分析（Phase 5）---
   knowledgeTagNames: string[];
@@ -275,6 +280,7 @@ function parseMockContext(request: AiCompletionRequest): MockContext {
     fallbackErrorTypeCode: 'undetermined',
     expectConflict: false,
     expectFabricatedQuote: false,
+    hasNotes: false,
     knowledgeTagNames: [],
     knowledgeTagAccuracies: [],
     errorTypeCodes: [],

@@ -1,5 +1,7 @@
 import {
   IMPORT_ISSUE_CODES,
+  MAX_NOTES_PER_IMPORT,
+  NOTE_CONTENT_MAX_CHARS,
   SUPPORTED_SCHEMA_VERSIONS,
   type ImportIssue,
   type ImportIssueCode,
@@ -42,14 +44,28 @@ export interface NormalizedImportQuestion {
   sourceReference: string | null;
   reviewRequired: boolean;
   reviewReason: string | null;
+  /** 這一題明確關聯的筆記 noteKey（來自檔案的 relatedNoteIds）。 */
+  relatedNoteIds: string[];
   issues: ImportIssue[];
   /** 有任何 error 級問題就不可 commit。 */
   hasError: boolean;
 }
 
+/** 章節筆記。與題目同批匯入，之後作為該題庫的本地資料源。 */
+export interface NormalizedImportNote {
+  /** 檔案內的識別（例如 N1），題目用它建立關聯。 */
+  noteKey: string;
+  title: string | null;
+  content: string;
+  sourcePage: number | null;
+  keywords: string[];
+}
+
 export interface ImportValidationResult {
   fileIssues: ImportIssue[];
   rows: NormalizedImportQuestion[];
+  /** 通過驗證的筆記。檔案沒有 notes 時為空陣列。 */
+  notes: NormalizedImportNote[];
   errorCount: number;
   warningCount: number;
   validCount: number;
@@ -151,6 +167,14 @@ export function validateImportFile(
     );
   }
 
+  // --- 筆記（1.1.0）---
+  //
+  // 必須在逐題驗證**之前**處理：題目的 relatedNoteIds 要比對已知的 noteKey，
+  // 順序反了就無法判斷引用是否對得上。
+  const { notes, issues: noteIssues } = validateNotes(file.notes);
+  fileIssues.push(...noteIssues);
+  const knownNoteKeys = new Set(notes.map((note) => note.noteKey));
+
   // 批次內重複偵測需要先掃一遍。
   const externalIdCounts = new Map<string, number>();
   const questionNumberCounts = new Map<number, number>();
@@ -164,7 +188,7 @@ export function validateImportFile(
   }
 
   const rows = rawQuestions.map((item, rowIndex) =>
-    validateRow(item, rowIndex, context, externalIdCounts, questionNumberCounts),
+    validateRow(item, rowIndex, context, externalIdCounts, questionNumberCounts, knownNoteKeys),
   );
 
   const errorCount = rows.filter((r) => r.hasError).length;
@@ -175,6 +199,7 @@ export function validateImportFile(
   return {
     fileIssues,
     rows,
+    notes,
     errorCount,
     warningCount,
     validCount: rows.length - errorCount,
@@ -183,7 +208,130 @@ export function validateImportFile(
 }
 
 function emptyResult(fileIssues: ImportIssue[]): ImportValidationResult {
-  return { fileIssues, rows: [], errorCount: 0, warningCount: 0, validCount: 0, reviewRequiredCount: 0 };
+  return {
+    fileIssues,
+    rows: [],
+    notes: [],
+    errorCount: 0,
+    warningCount: 0,
+    validCount: 0,
+    reviewRequiredCount: 0,
+  };
+}
+
+/**
+ * 驗證 `notes` 區塊。
+ *
+ * 筆記的問題一律是**檔案層級**而非逐題：一段壞掉的筆記不屬於任何一題，
+ * 掛在某個 rowIndex 上只會誤導。
+ *
+ * 缺少 notes 完全合法（1.0.0 的檔案就沒有），回傳空陣列。
+ */
+function validateNotes(raw: unknown): { notes: NormalizedImportNote[]; issues: ImportIssue[] } {
+  const issues: ImportIssue[] = [];
+  if (raw === undefined || raw === null) return { notes: [], issues };
+
+  if (!Array.isArray(raw)) {
+    issues.push(
+      issue('error', IMPORT_ISSUE_CODES.INVALID_NOTE_SHAPE, 'notes 必須是陣列。', null, 'notes'),
+    );
+    return { notes: [], issues };
+  }
+
+  if (raw.length > MAX_NOTES_PER_IMPORT) {
+    issues.push(
+      issue(
+        'error',
+        IMPORT_ISSUE_CODES.TOO_MANY_NOTES,
+        `筆記數量 ${raw.length} 超過單次匯入上限 ${MAX_NOTES_PER_IMPORT}。`,
+        null,
+        'notes',
+      ),
+    );
+    return { notes: [], issues };
+  }
+
+  const notes: NormalizedImportNote[] = [];
+  const seen = new Set<string>();
+
+  raw.forEach((item, index) => {
+    const path = `notes[${index}]`;
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      issues.push(
+        issue('error', IMPORT_ISSUE_CODES.INVALID_NOTE_SHAPE, `${path} 必須是物件。`, null, path),
+      );
+      return;
+    }
+
+    const row = item as Record<string, unknown>;
+    const noteKey = asString(row.noteId);
+    if (!noteKey) {
+      issues.push(
+        issue(
+          'error',
+          IMPORT_ISSUE_CODES.INVALID_NOTE_SHAPE,
+          `${path}.noteId 為必填，且必須是非空字串。`,
+          null,
+          `${path}.noteId`,
+        ),
+      );
+      return;
+    }
+
+    if (seen.has(noteKey)) {
+      issues.push(
+        issue(
+          'error',
+          IMPORT_ISSUE_CODES.DUPLICATE_NOTE_ID,
+          `noteId「${noteKey}」在同一份檔案中重複。`,
+          null,
+          `${path}.noteId`,
+        ),
+      );
+      return;
+    }
+    seen.add(noteKey);
+
+    const content = asString(row.content);
+    if (!content) {
+      issues.push(
+        issue(
+          'error',
+          IMPORT_ISSUE_CODES.EMPTY_NOTE_CONTENT,
+          `筆記「${noteKey}」的 content 不可為空。`,
+          null,
+          `${path}.content`,
+        ),
+      );
+      return;
+    }
+
+    if (content.length > NOTE_CONTENT_MAX_CHARS) {
+      issues.push(
+        issue(
+          'error',
+          IMPORT_ISSUE_CODES.NOTE_CONTENT_TOO_LONG,
+          `筆記「${noteKey}」長度 ${content.length} 超過上限 ${NOTE_CONTENT_MAX_CHARS}，請拆成多筆。`,
+          null,
+          `${path}.content`,
+        ),
+      );
+      return;
+    }
+
+    notes.push({
+      noteKey,
+      title: asString(row.title),
+      content,
+      sourcePage: asInt(row.sourcePage),
+      // 關鍵字只做正規化，不驗證內容——它是檢索的輔助，缺了也還有正文可比對。
+      keywords: Array.isArray(row.keywords)
+        ? row.keywords.map(asString).filter((k): k is string => k !== null)
+        : [],
+    });
+  });
+
+  return { notes, issues };
 }
 
 function validateRow(
@@ -192,6 +340,7 @@ function validateRow(
   context: ImportValidationContext,
   externalIdCounts: Map<string, number>,
   questionNumberCounts: Map<number, number>,
+  knownNoteKeys: ReadonlySet<string>,
 ): NormalizedImportQuestion {
   const issues: ImportIssue[] = [];
   const add = (
@@ -213,6 +362,7 @@ function validateRow(
     sourceReference: null,
     reviewRequired: false,
     reviewReason: null,
+    relatedNoteIds: [],
     issues,
     hasError: false,
   };
@@ -223,6 +373,32 @@ function validateRow(
   }
 
   const row = item as Record<string, unknown>;
+
+  // --- relatedNoteIds（1.1.0）---
+  //
+  // 引用不存在的 noteId 是 error 而不是 warning：靜靜忽略它，
+  // 使用者會以為這題掛了筆記，實際上分析時根本沒帶進去——
+  // 而那正是最難察覺的那種失效。
+  if (row.relatedNoteIds !== undefined && row.relatedNoteIds !== null) {
+    if (!Array.isArray(row.relatedNoteIds)) {
+      add('error', IMPORT_ISSUE_CODES.INVALID_ROW_SHAPE, 'relatedNoteIds 必須是陣列。', 'relatedNoteIds');
+    } else {
+      const referenced = row.relatedNoteIds
+        .map(asString)
+        .filter((key): key is string => key !== null);
+      const unknown = referenced.filter((key) => !knownNoteKeys.has(key));
+      if (unknown.length > 0) {
+        add(
+          'error',
+          IMPORT_ISSUE_CODES.UNKNOWN_NOTE_REFERENCE,
+          `relatedNoteIds 指向檔案中不存在的筆記：${unknown.join('、')}。`,
+          'relatedNoteIds',
+        );
+      }
+      // 去重後保留順序：重複引用同一段筆記沒有意義，但也不值得報錯。
+      base.relatedNoteIds = [...new Set(referenced.filter((key) => knownNoteKeys.has(key)))];
+    }
+  }
 
   // --- externalId ---
   base.externalId = asString(row.externalId);

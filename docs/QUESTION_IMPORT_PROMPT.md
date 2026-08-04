@@ -1,6 +1,6 @@
 # PDF 題庫整理 Prompt（QUESTION_IMPORT_PROMPT）
 
-> 版本：`import-prompt@1.0.0`
+> 版本：`import-prompt@1.1.0`
 > 用途：交給具備 PDF 閱讀能力的外部大型語言模型（GPT、Claude 等），把 PDF 題庫轉成本系統可匯入的 JSON。
 > 系統內可由 `GET /imports/prompt` 取得同一份文字，前端「JSON 匯入」頁面提供一鍵複製。
 
@@ -38,13 +38,15 @@
 9. 選項代號統一使用大寫英文字母：A、B、C、D…。原文若用 (1)(2)(3)(4) 或甲乙丙丁，
    請依序對應為 A、B、C、D，但選項「文字內容」仍須保留原文。
 10. 只處理單選題與複選題。填充題、簡答題、申論題、計算題請整個略過，不要嘗試轉換。
+11. 若 PDF 中除了題目之外還有**講義、重點整理、條文摘錄**等筆記性內容，一併擷取到 notes。
+    同樣是原文照錄，**不得自行撰寫、改寫或補充**。PDF 裡沒有筆記就給空陣列。
 
 # 輸出格式
 
 輸出一個 JSON 物件，結構如下：
 
 {
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.1.0",
   "subject": {
     "name": "科目名稱",
     "code": null,
@@ -67,6 +69,15 @@
     "title": null,
     "totalPages": 18
   },
+  "notes": [
+    {
+      "noteId": "N1",
+      "title": "小節標題（沒有就填 null）",
+      "content": "這一段筆記的原文。一段一個主題。",
+      "sourcePage": 3,
+      "keywords": ["主題詞1", "主題詞2"]
+    }
+  ],
   "questions": [
     {
       "externalId": "此題的唯一識別，建議格式：<來源代號>-Q<題號>",
@@ -85,14 +96,15 @@
       "sourceReference": "第三章 行政行為",
       "reviewRequired": false,
       "reviewReason": null,
-      "knowledgeHints": ["此題考查的知識點（選填，最多 3 個）"]
+      "knowledgeHints": ["此題考查的知識點（選填，最多 3 個）"],
+      "relatedNoteIds": ["N1"]
     }
   ]
 }
 
 # 欄位規則
 
-- schemaVersion：固定填 "1.0.0"。
+- schemaVersion：固定填 "1.1.0"。
 - chapter：PDF 若沒有章節結構，整個填 null。
 - type：只能是 "single_choice" 或 "multiple_choice"。
   題目若出現「複選」「多選」「選出所有」等字樣，或答案有多個，就是 multiple_choice。
@@ -112,6 +124,24 @@
 - externalId：同一份輸出裡不得重複。
 - questionNumber：同一份輸出裡不得重複；若 PDF 分節重新編號，請在 externalId 中加入節次區分。
 
+## notes（章節筆記）
+
+PDF 裡除了題目以外的講義、重點整理、條文摘錄都放這裡。匯入後它會成為這個題庫的
+本地資料源，AI 產生解析時會優先採用——所以**照錄原文**特別重要，寫錯會被當成正解。
+
+- noteId：N1、N2… 同一份輸出裡不得重複。
+- content：原文照錄。**一段一個主題**，不要把整章塞成一筆——
+  系統是以「整段」為單位取用的，一大坨會讓不相關的內容一起被送進模型。
+  單筆上限 20000 字，超過請拆開。
+- title：小節標題，沒有就填 null。
+- keywords：這段在講什麼的主題詞。填了會明顯提高被正確題目取用的機率。
+- sourcePage：這段在 PDF 的頁碼。
+- PDF 中沒有筆記性內容時，notes 填空陣列 `[]`。**不要為了填滿而自己寫。**
+
+- relatedNoteIds：某一題明確對應到哪幾段筆記就填（例如 ["N1"]）。
+  填了的話那幾段一定會被採用；不確定就不要填，系統會自己用關鍵字比對。
+  **不可以填不存在的 noteId**——那會讓該題驗證失敗。
+
 # 品質檢查（輸出前請自行確認）
 
 在給出結果之前，逐條檢查：
@@ -127,6 +157,9 @@
 □ externalId 與 questionNumber 都沒有重複
 □ 跨頁題目已經合併完整
 □ 選項代號已統一為大寫英文字母
+□ notes 的內容都是 PDF 原文，沒有任何一段是我自己寫的
+□ notes 的 noteId 沒有重複
+□ 所有 relatedNoteIds 都指向真的存在的 noteId
 
 如果 PDF 中有任何題目你無法確定，請照樣輸出該題，
 但把 reviewRequired 設為 true 並說明原因——不要略過它，也不要猜一個答案然後假裝有把握。

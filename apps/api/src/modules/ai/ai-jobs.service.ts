@@ -9,7 +9,7 @@ import {
   type ListAiJobsQuery,
   type PaginationMeta,
 } from '@repo/contracts';
-import { computeAiJobIdempotencyKey } from '@repo/contracts/server';
+import { computeAiJobIdempotencyKey, computeNotesFingerprint } from '@repo/contracts/server';
 import { schema, type DatabaseHandle } from '@repo/db';
 import { and, desc, eq, isNull, sql, type SQL } from 'drizzle-orm';
 
@@ -18,6 +18,7 @@ import { DATABASE } from '../../infra/infra.module';
 import { type AggregateJobInput } from './aggregate-analysis.service';
 import { AiGatewayService } from './ai-gateway.service';
 import { AiQueueService, QUEUE_QUESTION_ANALYSIS } from './ai-queue.service';
+import { NotesService } from './notes.service';
 import { PromptSeedService } from './prompts/prompt-seed.service';
 
 type JobRow = typeof schema.aiJobs.$inferSelect;
@@ -29,6 +30,7 @@ export class AiJobsService {
     private readonly queue: AiQueueService,
     private readonly gateway: AiGatewayService,
     private readonly promptSeed: PromptSeedService,
+    private readonly notes: NotesService,
   ) {}
 
   /**
@@ -47,10 +49,28 @@ export class AiJobsService {
 
     if (dto.userAnswerId) await this.assertAnswerBelongsToQuestion(userId, dto.userAnswerId, questionId);
 
+    /*
+     * 章節筆記也是這次分析的依據，因此必須進冪等鍵。
+     *
+     * 少了它，改完筆記再按分析會落在同一個鍵上、直接拿回上一個已完成的任務——
+     * 畫面瞬間顯示「完成」，內容卻還是舊的，而且沒有任何跡象說明為什麼。
+     * `findUsableCache` 那一層擋不住這個：根本走不到那裡就回傳舊任務了。
+     */
+    const notesFingerprint = computeNotesFingerprint(
+      (
+        await this.notes.collectForQuestion({
+          questionId,
+          questionGroupId: question.questionGroupId,
+          questionText: await this.questionTextFor(questionId, question.stem),
+        })
+      ).fingerprintInputs,
+    );
+
     const discriminator = [
       question.contentHash,
       this.gateway.model,
       this.promptSeed.activeVersion('final_explanation'),
+      notesFingerprint,
       dto.userAnswerId ?? '-',
       // force 帶上時間戳，讓強制重跑一定會產生新任務。
       dto.force ? String(Date.now()) : 'cached',
@@ -355,6 +375,8 @@ export class AiJobsService {
         id: schema.questions.id,
         contentHash: schema.questions.contentHash,
         status: schema.questions.status,
+        questionGroupId: schema.questions.questionGroupId,
+        stem: schema.questions.stem,
       })
       .from(schema.questions)
       .where(
@@ -369,6 +391,21 @@ export class AiJobsService {
     const row = rows[0];
     if (!row) throw new AppException(ERROR_CODES.QUESTION_NOT_FOUND, '找不到指定的題目。');
     return row;
+  }
+
+  /**
+   * 組出用於筆記檢索的題目文字（題幹 + 選項）。
+   *
+   * 必須與 QuestionAnalysisService 用的文字完全相同，否則兩邊會挑出不同的
+   * 筆記集合，冪等鍵與快取判準就各說各話。
+   */
+  private async questionTextFor(questionId: string, stem: string): Promise<string> {
+    const options = await this.database.db
+      .select({ text: schema.questionOptions.text })
+      .from(schema.questionOptions)
+      .where(eq(schema.questionOptions.questionId, questionId))
+      .orderBy(schema.questionOptions.sortOrder);
+    return [stem, ...options.map((o) => o.text)].join('\n');
   }
 
   private async assertAnswerBelongsToQuestion(

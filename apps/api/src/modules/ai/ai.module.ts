@@ -13,6 +13,7 @@ import { AiQueueService } from './ai-queue.service';
 import { AnalysisReadService } from './analysis-read.service';
 import { ConflictsService } from './conflicts.service';
 import { EvidenceService } from './evidence.service';
+import { NotesService } from './notes.service';
 import { PromptBuilder } from './prompts/prompt-builder';
 import { PromptSeedService } from './prompts/prompt-seed.service';
 import { AI_PROVIDER, type AiProvider } from './providers/ai-provider';
@@ -63,6 +64,7 @@ import { TavilySearchProvider } from './search/tavily-search.provider';
     AiConcurrencyLimiter,
     AiGatewayService,
     EvidenceService,
+    NotesService,
     PromptBuilder,
     PromptSeedService,
     QuestionAnalysisService,

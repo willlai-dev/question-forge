@@ -366,6 +366,7 @@ export class ConflictsService {
       sourceIds: row.conflict.sourceIds ?? [],
       sources: sources.map((source) => ({
         sourceId: source.sourceId,
+        sourceType: source.sourceType as 'web' | 'note',
         url: source.url,
         domain: source.domain,
         title: source.title,

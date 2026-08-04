@@ -36,6 +36,13 @@
       "when": 1785688565708,
       "tag": "0004_phase5_aggregate_analysis",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785855750233,
+      "tag": "0005_phase6_study_notes",
+      "breakpoints": true
     }
   ]
 }

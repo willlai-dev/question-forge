@@ -284,6 +284,25 @@ uploaded → validating → validated ─────┐
 `isCorrect` 為 `null` 有兩種意思——「還不能說」與「這題還沒作答」。兩者都**不是答錯**，
 前端據此畫成中性色；把 `null` 當成 `false` 會讓整排空白題變成一片紅。
 
+---
+
+### 章節筆記作為證據來源（匯入格式 1.1.0）
+
+`GET /questions/:id/analysis` 的 `sources[]` 現在有兩種：
+
+| `sourceType` | `url` / `domain` | 來源 |
+|---|---|---|
+| `web` | 必有 | Tavily 搜尋 + 擷取 |
+| `note` | **一律 `null`** | 使用者隨題庫匯入的章節筆記 |
+
+兩者共用同一張資料表與**同一套引用驗證**——「citations ⊆ 本次來源」與
+「quote 必須逐字出自來源」對筆記一體適用。為新來源種類另寫一套驗證遲早會分岔，
+而這裡分岔的後果正是這個功能最該防的事：AI 捏造你筆記裡沒寫過的話。
+
+`url` 因此由必填放寬為可空。放寬是為了容納筆記，不是為了讓網頁來源可以沒有出處——
+資料庫以 `CHECK (source_type <> 'web' OR url IS NOT NULL)` 守住這一點。
+前端必須依 `sourceType` 或 `url === null` 決定要不要渲染成連結。
+
 > 這是契約層的硬性保證，不是前端隱藏。`after_submit` 模式下若在交卷前請求結果，回
 > `409 QUIZ_ANSWER_NOT_REVEALED_YET`。端到端測試對整份回應做**遞迴掃描**，
 > 只要出現任何非 null 的答案類欄位就失敗 —— 逐欄位列舉會隨著契約演進而失效。

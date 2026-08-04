@@ -60,19 +60,35 @@ export const TRUST_TIER_RANK: Record<TrustTier, number> = {
 };
 
 /** 程式指派給模型的證據來源。模型只能引用這裡的 sourceId。 */
+/**
+ * 一次分析中送進模型的單一來源。
+ *
+ * 兩種來源共用這個型別（也共用同一張資料表）：網頁與使用者匯入的章節筆記。
+ * 共用的理由是引用驗證只能有一套——「citations ⊆ 本次來源」與
+ * 「quote 必須逐字出自來源」對兩者一體適用。分成兩套遲早會分岔，
+ * 而分岔的後果是 AI 可以捏造筆記內容。
+ */
 export interface EvidenceSource {
   sourceId: string;
-  url: string;
-  domain: string;
+  sourceType: EvidenceSourceType;
+  /** 筆記沒有 URL 與網域。 */
+  url: string | null;
+  domain: string | null;
   title: string;
   publishedDate: string | null;
   fetchedAt: string;
   trustTier: TrustTier;
   content: string;
-  searchQuery: string;
-  rank: number;
-  score: number;
+  /** 筆記不是查來的，因此沒有查詢字串與搜尋排名。 */
+  searchQuery: string | null;
+  rank: number | null;
+  score: number | null;
+  /** 筆記來源指回 study_notes，供追溯是哪一段筆記。 */
+  studyNoteId: string | null;
 }
+
+export const evidenceSourceTypeSchema = z.enum(['web', 'note']);
+export type EvidenceSourceType = z.infer<typeof evidenceSourceTypeSchema>;
 
 /** AI 呼叫的三個階段。 */
 export const aiOperationSchema = z.enum([

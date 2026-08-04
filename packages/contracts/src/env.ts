@@ -106,6 +106,15 @@ export const envSchema = z.object({
   EVIDENCE_SOURCE_MAX_CHARS: positiveInt.default(4000),
   EVIDENCE_TOTAL_MAX_CHARS: positiveInt.default(24_000),
   EVIDENCE_STALE_AFTER_DAYS: positiveInt.default(90),
+  /**
+   * 章節筆記的字元預算，**與網頁來源分開計算**。
+   *
+   * 共用同一個池子的話，一段長筆記會把法條原文整個擠掉；
+   * 反過來，幾則長網頁也會讓筆記完全進不來。兩邊各有額度才互不排擠。
+   */
+  NOTES_MAX_CHARS_PER_QUESTION: positiveInt.default(12_000),
+  /** 單題最多帶入幾段筆記。超過通常代表關鍵字太泛，不如少而準。 */
+  NOTES_MAX_PER_QUESTION: positiveInt.max(20).default(5),
 
   // --- BullMQ ---
   WORKER_INLINE: boolFromString.default('true'),

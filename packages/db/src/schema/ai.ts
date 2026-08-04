@@ -215,8 +215,19 @@ export const questionEvidenceSources = pgTable(
       .notNull()
       .references(() => questionEvidenceSets.id, { onDelete: 'cascade' }),
     sourceId: text('source_id').notNull(),
-    url: text('url').notNull(),
-    domain: text('domain').notNull(),
+    /**
+     * 來源種類。
+     *
+     * `note` 是使用者隨題庫匯入的章節筆記，沒有 URL 也沒有網域。
+     * 兩種來源共用同一張表，是為了讓引用驗證只有一套——
+     * 「citations ⊆ 本次來源」與「quote 必須逐字出自來源」對筆記一體適用。
+     */
+    sourceType: text('source_type').notNull().default('web'),
+    /** 筆記來源指回 study_notes，便於追溯是哪一段筆記。 */
+    studyNoteId: uuid('study_note_id'),
+    /** 筆記沒有 URL，因此放寬為可空；web 來源仍由 CHECK 強制必填。 */
+    url: text('url'),
+    domain: text('domain'),
     title: text('title').notNull(),
     publishedDate: text('published_date'),
     fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
@@ -235,6 +246,19 @@ export const questionEvidenceSources = pgTable(
       'question_evidence_sources_trust_tier_check',
       sql`${t.trustTier} in ('official', 'academic', 'educational', 'reference', 'other')`,
     ),
+    check(
+      'question_evidence_sources_source_type_check',
+      sql`${t.sourceType} in ('web', 'note')`,
+    ),
+    // 放寬 url 是為了容納筆記，不是為了讓網頁來源可以沒有出處。
+    check(
+      'question_evidence_sources_web_url_check',
+      sql`${t.sourceType} <> 'web' or (${t.url} is not null and ${t.domain} is not null)`,
+    ),
+    check(
+      'question_evidence_sources_note_ref_check',
+      sql`${t.sourceType} <> 'note' or ${t.studyNoteId} is not null`,
+    ),
     unique('question_evidence_sources_set_source_unique').on(t.evidenceSetId, t.sourceId),
     index('question_evidence_sources_set_idx').on(t.evidenceSetId),
   ],
@@ -250,6 +274,14 @@ export const questionAiEnrichments = pgTable(
       .references(() => questions.id, { onDelete: 'cascade' }),
     /** 產生當下的題目內容雜湊。與現值不符即代表快取失效（規格 §12）。 */
     questionContentHash: text('question_content_hash').notNull(),
+    /**
+     * 產生當下所依據的章節筆記指紋。
+     *
+     * questionContentHash 只涵蓋題目本身：筆記重新匯入後題目沒變、雜湊不變，
+     * 舊解析會繼續命中快取——使用者改了筆記卻看不到任何差別。
+     * 舊資料為 null，視同「當時沒有筆記」。
+     */
+    notesFingerprint: text('notes_fingerprint'),
     evidenceSetId: uuid('evidence_set_id').references(() => questionEvidenceSets.id, {
       onDelete: 'set null',
     }),

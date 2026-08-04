@@ -51,6 +51,8 @@ export const importBatches = pgTable(
     warningCount: integer('warning_count').notNull().default(0),
     reviewRequiredCount: integer('review_required_count').notNull().default(0),
     committedCount: integer('committed_count').notNull().default(0),
+    /** 通過驗證的章節筆記數（schemaVersion 1.1.0 起）。 */
+    noteCount: integer('note_count').notNull().default(0),
 
     /** 原始上傳內容，供追溯（FR-IMP-09）。 */
     rawPayload: jsonb('raw_payload').notNull(),

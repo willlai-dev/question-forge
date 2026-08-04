@@ -68,7 +68,17 @@ function PreviewView({ batchId }: { batchId: string }) {
             共 {data?.totalCount ?? 0} 題 · 可匯入 {data?.validCount ?? 0} · 錯誤{' '}
             {data?.errorCount ?? 0} · 警告 {data?.warningCount ?? 0}
             {data && data.reviewRequiredCount > 0 && ` · 需複核 ${data.reviewRequiredCount}`}
+            {data && data.noteCount > 0 && ` · 章節筆記 ${data.noteCount} 段`}
           </p>
+          {/*
+            筆記會直接影響 AI 解析的內容，而且是「筆記優先」——
+            匯進去了多少必須看得見，否則使用者無從得知解析是依據什麼寫出來的。
+          */}
+          {data && data.noteCount > 0 && (
+            <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-400">
+              這批筆記匯入後會成為此題庫的本地資料源，AI 解析時優先採用。
+            </p>
+          )}
         </div>
         {data && <StatusBadge status={data.status} />}
       </div>

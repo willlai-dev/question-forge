@@ -148,17 +148,24 @@ function ConflictsView() {
                   <p className="font-medium">查證來源</p>
                   {item.sources
                     .filter((source) => source.isUsed)
-                    .map((source) => (
-                      <a
-                        key={source.sourceId}
-                        href={source.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block text-xs underline underline-offset-4"
-                      >
-                        {source.sourceId}：{source.title}（{source.domain}）
-                      </a>
-                    ))}
+                    .map((source) =>
+                      // 章節筆記沒有 URL，只能以純文字呈現。
+                      source.url === null ? (
+                        <p key={source.sourceId} className="block text-xs">
+                          {source.sourceId}：{source.title}（你的章節筆記）
+                        </p>
+                      ) : (
+                        <a
+                          key={source.sourceId}
+                          href={source.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block text-xs underline underline-offset-4"
+                        >
+                          {source.sourceId}：{source.title}（{source.domain}）
+                        </a>
+                      ),
+                    )}
                 </div>
               )}
 

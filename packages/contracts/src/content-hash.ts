@@ -49,3 +49,33 @@ export function computeQuestionContentHash(input: {
 
   return createHash('sha256').update(payload, 'utf8').digest('hex');
 }
+
+/** 單筆筆記的內容雜湊。與題目用同一套文字正規化。 */
+export function computeNoteContentHash(content: string): string {
+  return createHash('sha256').update(normalizeText(content), 'utf8').digest('hex');
+}
+
+/**
+ * 一次分析所依據的筆記集合指紋。
+ *
+ * 為什麼需要它：`questionContentHash` 只涵蓋題目本身。筆記重新匯入之後，
+ * 題目沒變、雜湊不變，既有解析會繼續命中快取——使用者改了筆記卻看不到
+ * 任何差別，而且完全沒有跡象說明為什麼。
+ *
+ * 依 noteId 排序後計算，因此**與檢索回來的順序無關**：
+ * 順序變動不代表依據的內容變了，不該平白讓所有解析失效。
+ * 空集合回傳固定字串，讓「這題沒有筆記」也是一個明確的狀態。
+ */
+export function computeNotesFingerprint(
+  notes: readonly { id: string; contentHash: string }[],
+): string {
+  if (notes.length === 0) return 'no-notes';
+
+  const payload = JSON.stringify(
+    [...notes]
+      .map((note) => [note.id, note.contentHash])
+      .sort((a, b) => a[0]!.localeCompare(b[0]!)),
+  );
+
+  return createHash('sha256').update(payload, 'utf8').digest('hex');
+}

@@ -49,6 +49,22 @@ function check(label, condition, detail = '') {
   else { fail += 1; console.log(`  ✘ ${label} ${detail}`); }
 }
 
+/** 匯入是 multipart 上傳，不能用 call()。 */
+async function upload(path, filename, content) {
+  const form = new FormData();
+  form.append('file', new Blob([JSON.stringify(content)], { type: 'application/json' }), filename);
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { Cookie: cookieHeader(), 'X-CSRF-Token': csrf },
+    body: form,
+  });
+  absorb(res);
+  const text = await res.text();
+  let json;
+  try { json = text ? JSON.parse(text) : undefined; } catch { json = text; }
+  return { status: res.status, body: json };
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 let csrf = '';
@@ -371,6 +387,118 @@ const run = async () => {
     check('答對時不硬套錯因（whyWrong 為 null）',
       correctAnalysis.body?.personalized?.whyWrong === null,
       String(correctAnalysis.body?.personalized?.whyWrong).slice(0, 80));
+  }
+
+  // 章節筆記作為本地資料源。
+  //
+  // 使用者的單章 PDF 題目與筆記並存，筆記匯入後應該直接參與 AI 解析——
+  // 比網路搜尋精準，且不消耗 API 額度。關鍵是它必須走**與網頁完全相同**的
+  // 引用驗證路徑，否則「AI 不得捏造來源內容」對筆記就形同虛設。
+  console.log('\n=== 章節筆記作為 AI 的資料源 ===');
+
+  const noteImport = await upload('/imports', 'notes.json', {
+    schemaVersion: '1.1.0',
+    subject: { name: `AI測試科目${stamp}` },
+    questionGroup: { name: `筆記題組${stamp}` },
+    notes: [
+      {
+        noteId: 'N1',
+        title: '行政處分的定義',
+        content: '行政處分須為行政機關就公法上具體事件所為之單方行政行為，並對外直接發生法律效果。拆除命令屬於行政處分。',
+        keywords: ['行政處分', '拆除命令'],
+      },
+    ],
+    questions: [
+      {
+        externalId: `NOTE-${stamp}-1`,
+        questionNumber: 1,
+        type: 'single_choice',
+        stem: '下列何者屬於行政處分？',
+        options: [
+          { key: 'A', text: '拆除命令' },
+          { key: 'B', text: '行政指導' },
+          { key: 'C', text: '行政計畫' },
+        ],
+        correctAnswers: ['A'],
+        explanation: null,
+        reviewRequired: false,
+        relatedNoteIds: ['N1'],
+      },
+    ],
+  });
+
+  {
+    check('筆記匯入批次建立成功', noteImport.status === 201, JSON.stringify(noteImport.body).slice(0, 200));
+    const noteCommit = await call('POST', `/imports/${noteImport.body.id}/commit`, {}, H());
+    check('筆記與題目 commit 成功', noteCommit.status === 200, JSON.stringify(noteCommit.body));
+
+    const noteQuestions = await call('GET',
+      `/questions?questionGroupId=${noteCommit.body.questionGroupId}&pageSize=10`);
+    const noteQuestionId = noteQuestions.body?.items?.[0]?.id;
+    check('取得帶筆記的題目', Boolean(noteQuestionId));
+
+    const noteJob = await call('POST', `/ai/questions/${noteQuestionId}/analyze`, { force: false }, H());
+    const noteDone = await waitForJob(noteJob.body.id);
+    check('帶筆記的題目分析完成', noteDone.status === 'completed',
+      `status=${noteDone.status} ${String(noteDone.errorMessage).slice(0, 200)}`);
+
+    const noteAnalysis = await call('GET', `/questions/${noteQuestionId}/analysis`);
+    const noteSources = (noteAnalysis.body?.sources ?? []).filter((s) => s.sourceType === 'note');
+    check('**章節筆記出現在證據來源中**', noteSources.length === 1,
+      JSON.stringify((noteAnalysis.body?.sources ?? []).map((s) => s.sourceType)));
+    check('筆記來源沒有 URL 與網域（契約上是可空的）',
+      noteSources[0]?.url === null && noteSources[0]?.domain === null,
+      JSON.stringify({ url: noteSources[0]?.url, domain: noteSources[0]?.domain }));
+    check('筆記排在網頁來源前面（筆記優先）',
+      noteAnalysis.body?.sources?.[0]?.sourceType === 'note',
+      JSON.stringify(noteAnalysis.body?.sources?.map((s) => `${s.sourceId}:${s.sourceType}`)));
+    check('**來源編號合併後連續不重複**',
+      (() => {
+        const ids = (noteAnalysis.body?.sources ?? []).map((s) => s.sourceId);
+        return new Set(ids).size === ids.length &&
+          ids.every((id, i) => id === `S${i + 1}`);
+      })(),
+      JSON.stringify(noteAnalysis.body?.sources?.map((s) => s.sourceId)));
+    check('有筆記時 researchMode 不是 MODEL_ONLY（否則引用不到筆記）',
+      noteAnalysis.body?.researchMode !== 'MODEL_ONLY', noteAnalysis.body?.researchMode);
+
+    // 筆記改了 → 快取必須失效。題目本身沒變，content_hash 不會動，
+    // 少了筆記指紋這一層，使用者改了筆記卻看不到任何差別。
+    const beforeNoteChange = (await call('GET', '/ai/usage')).body.totalCalls;
+    const changedNotes = await upload('/imports', 'notes-v2.json', {
+      schemaVersion: '1.1.0',
+      subject: { name: `AI測試科目${stamp}` },
+      questionGroup: { name: `筆記題組${stamp}` },
+      notes: [{ noteId: 'N1', title: '行政處分的定義', content: '修訂後的筆記內容：行政處分對外直接發生法律效果，拆除命令屬之。', keywords: ['行政處分'] }],
+      questions: [{
+        externalId: `NOTE-${stamp}-2`,
+        questionNumber: 2,
+        type: 'single_choice',
+        stem: '行政指導是否為行政處分？',
+        options: [{ key: 'A', text: '否' }, { key: 'B', text: '是' }],
+        correctAnswers: ['A'],
+        explanation: null,
+        reviewRequired: false,
+      }],
+    });
+    if (changedNotes.status === 201) {
+      await call('POST', `/imports/${changedNotes.body.id}/commit`,
+        { targetGroupId: noteCommit.body.questionGroupId }, H());
+      const afterChangeJob = await call('POST', `/ai/questions/${noteQuestionId}/analyze`,
+        { force: false }, H());
+      // 冪等鍵必須含筆記指紋，否則會直接拿回上一個已完成的任務——
+      // 畫面瞬間顯示「完成」，內容卻還是舊的。
+      check('**筆記改動後產生的是新任務（冪等鍵含筆記指紋）**',
+        afterChangeJob.body?.id !== noteJob.body.id,
+        `${afterChangeJob.body?.id} vs ${noteJob.body.id}`);
+      const afterChangeDone = await waitForJob(afterChangeJob.body.id);
+      check('筆記改動後重新分析完成', afterChangeDone.status === 'completed',
+        String(afterChangeDone.status));
+      const afterCalls = (await call('GET', '/ai/usage')).body.totalCalls;
+      check('**筆記改動使快取失效（確實重新呼叫了模型）**',
+        afterChangeDone.servedFromCache === false && afterCalls > beforeNoteChange,
+        `servedFromCache=${afterChangeDone.servedFromCache} calls=${beforeNoteChange}→${afterCalls}`);
+    }
   }
 
   console.log('\n=== 題目內容變更會使快取失效 ===');

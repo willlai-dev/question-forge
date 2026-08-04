@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { computeQuestionContentHash } from './content-hash';
+import {
+  computeNoteContentHash,
+  computeNotesFingerprint,
+  computeQuestionContentHash,
+} from './content-hash';
 
 const base = {
   type: 'single_choice',
@@ -81,5 +85,53 @@ describe('computeQuestionContentHash', () => {
 
   it('輸出為 64 字元的十六進位字串（sha256）', () => {
     expect(computeQuestionContentHash(base)).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+/**
+ * 章節筆記指紋。
+ *
+ * questionContentHash 只涵蓋題目本身：筆記重新匯入後題目沒變、雜湊不變，
+ * 舊解析會繼續命中快取——使用者改了筆記卻看不到任何差別，也沒有跡象說明為什麼。
+ */
+describe('computeNotesFingerprint', () => {
+  const n = (id: string, contentHash: string) => ({ id, contentHash });
+
+  it('空集合有固定且明確的值', () => {
+    expect(computeNotesFingerprint([])).toBe('no-notes');
+  });
+
+  it('**順序不影響指紋**（檢索順序變動不代表依據的內容變了）', () => {
+    const a = computeNotesFingerprint([n('id-1', 'h1'), n('id-2', 'h2')]);
+    const b = computeNotesFingerprint([n('id-2', 'h2'), n('id-1', 'h1')]);
+    expect(a).toBe(b);
+  });
+
+  it('筆記內容改了 → 指紋改變（快取才會失效）', () => {
+    const before = computeNotesFingerprint([n('id-1', 'h1')]);
+    const after = computeNotesFingerprint([n('id-1', 'h1-modified')]);
+    expect(after).not.toBe(before);
+  });
+
+  it('多帶一段筆記 → 指紋改變', () => {
+    const one = computeNotesFingerprint([n('id-1', 'h1')]);
+    const two = computeNotesFingerprint([n('id-1', 'h1'), n('id-2', 'h2')]);
+    expect(two).not.toBe(one);
+  });
+
+  it('有筆記與沒筆記絕不會撞在一起', () => {
+    expect(computeNotesFingerprint([n('id-1', 'h1')])).not.toBe('no-notes');
+  });
+});
+
+describe('computeNoteContentHash', () => {
+  it('只有空白差異視為同一份內容', () => {
+    expect(computeNoteContentHash('期貨  交易稅\n規定')).toBe(
+      computeNoteContentHash('期貨 交易稅 規定'),
+    );
+  });
+
+  it('實質內容不同就是不同的雜湊', () => {
+    expect(computeNoteContentHash('十萬分之2')).not.toBe(computeNoteContentHash('十萬分之3'));
   });
 });

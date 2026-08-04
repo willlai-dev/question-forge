@@ -10,7 +10,20 @@ import { z } from 'zod';
  * 因此結構解析與逐題規則檢查是分開的兩層。
  */
 
-export const SUPPORTED_SCHEMA_VERSIONS = ['1.0.0'] as const;
+/**
+ * 支援的匯入格式版本。
+ *
+ * 1.1.0 新增 `notes`（章節筆記）與題目的 `relatedNoteIds`。
+ * 1.0.0 continues to be accepted —— 舊檔案不該因為格式演進就匯不進來，
+ * 而且 1.1.0 的新欄位全部選填，兩者在同一支驗證器裡差異極小。
+ */
+export const SUPPORTED_SCHEMA_VERSIONS = ['1.0.0', '1.1.0'] as const;
+
+/** 單筆筆記的長度上限。超過通常代表整章被塞成一段，檢索會失去意義。 */
+export const NOTE_CONTENT_MAX_CHARS = 20_000;
+
+/** 單次匯入的筆記數量上限。 */
+export const MAX_NOTES_PER_IMPORT = 200;
 
 export const IMPORT_ISSUE_CODES = {
   // --- 阻斷性錯誤 ---
@@ -33,6 +46,19 @@ export const IMPORT_ISSUE_CODES = {
   INVALID_QUESTION_NUMBER: 'INVALID_QUESTION_NUMBER',
   INVALID_SOURCE_PAGE: 'INVALID_SOURCE_PAGE',
   TOO_MANY_QUESTIONS: 'TOO_MANY_QUESTIONS',
+  // --- 筆記（schemaVersion 1.1.0）---
+  INVALID_NOTE_SHAPE: 'INVALID_NOTE_SHAPE',
+  DUPLICATE_NOTE_ID: 'DUPLICATE_NOTE_ID',
+  EMPTY_NOTE_CONTENT: 'EMPTY_NOTE_CONTENT',
+  NOTE_CONTENT_TOO_LONG: 'NOTE_CONTENT_TOO_LONG',
+  TOO_MANY_NOTES: 'TOO_MANY_NOTES',
+  /**
+   * 題目引用了不存在的 noteId。
+   *
+   * 這是 error 而不是 warning：靜靜忽略一個對不上的引用，
+   * 等於讓使用者以為某題掛了筆記，實際上分析時根本沒帶進去。
+   */
+  UNKNOWN_NOTE_REFERENCE: 'UNKNOWN_NOTE_REFERENCE',
 
   // --- 警告（不阻擋 commit）---
   MISSING_EXPLANATION: 'MISSING_EXPLANATION',
@@ -70,6 +96,8 @@ export const rawImportFileSchema = z
     chapter: z.unknown().optional(),
     questionGroup: z.unknown(),
     sourceDocument: z.unknown().optional(),
+    /** schemaVersion 1.1.0 起的章節筆記。 */
+    notes: z.unknown().optional(),
     questions: z.array(rawImportQuestionSchema),
   })
   .passthrough();
@@ -119,6 +147,8 @@ export const importBatchResponseSchema = z.object({
   warningCount: z.number().int(),
   reviewRequiredCount: z.number().int(),
   committedCount: z.number().int(),
+  /** 通過驗證的章節筆記數。1.0.0 的檔案永遠是 0。 */
+  noteCount: z.number().int(),
   /** 檔案層級問題（例如 schemaVersion 不支援）。 */
   fileIssues: z.array(
     z.object({

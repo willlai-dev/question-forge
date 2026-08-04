@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
-import { aiOperationSchema, confidenceSchema, researchModeSchema, trustTierSchema } from '../ai/common';
+import {
+  aiOperationSchema,
+  confidenceSchema,
+  evidenceSourceTypeSchema,
+  researchModeSchema,
+  trustTierSchema,
+} from '../ai/common';
 import { paginationQuerySchema, uuidSchema } from './common';
 
 /**
@@ -95,8 +101,10 @@ export type ListAiJobsQuery = z.infer<typeof listAiJobsQuerySchema>;
 
 export const evidenceSourceResponseSchema = z.object({
   sourceId: z.string(),
-  url: z.string(),
-  domain: z.string(),
+  /** `note` 是使用者匯入的章節筆記，沒有 URL 與網域。 */
+  sourceType: evidenceSourceTypeSchema,
+  url: z.string().nullable(),
+  domain: z.string().nullable(),
   title: z.string(),
   publishedDate: z.string().nullable(),
   fetchedAt: z.string().datetime(),
