@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 
 import { AiAnalysisPanel } from '@/components/ai-analysis-panel';
 import { AppShell } from '@/components/app-shell';
+import { QuestionNavigator } from '@/components/question-navigator';
 import { Button, Card, ErrorBanner } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
@@ -109,9 +110,12 @@ function QuizSessionView() {
               : '．作答後立即顯示答案'}
           </p>
         </div>
-        <Button variant="secondary" onClick={() => submit.mutate()} disabled={submit.isPending}>
-          {submit.isPending ? '交卷中…' : '交卷'}
-        </Button>
+        <div className="flex items-center gap-2">
+          <QuestionNavigator sessionId={sessionId} position={position} onJump={setPosition} />
+          <Button variant="secondary" onClick={() => submit.mutate()} disabled={submit.isPending}>
+            {submit.isPending ? '交卷中…' : '交卷'}
+          </Button>
+        </div>
       </div>
 
       <div className="h-1.5 overflow-hidden rounded-full bg-muted">

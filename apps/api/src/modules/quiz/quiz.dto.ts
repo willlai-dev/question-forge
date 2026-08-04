@@ -6,6 +6,7 @@ import {
   mistakeDetailResponseSchema,
   mistakeResponseSchema,
   mistakeStatsResponseSchema,
+  quizOutlineResponseSchema,
   quizQuestionResponseSchema,
   quizResultResponseSchema,
   quizSessionResponseSchema,
@@ -23,6 +24,7 @@ export class SubmitAnswerDto extends createZodDto(submitAnswerSchema) {}
 export class UpdateAnswerDto extends createZodDto(updateAnswerSchema) {}
 export class QuizSessionResponseDto extends createZodDto(quizSessionResponseSchema) {}
 export class QuizQuestionResponseDto extends createZodDto(quizQuestionResponseSchema) {}
+export class QuizOutlineResponseDto extends createZodDto(quizOutlineResponseSchema) {}
 export class SubmitAnswerResponseDto extends createZodDto(submitAnswerResponseSchema) {}
 export class QuizResultResponseDto extends createZodDto(quizResultResponseSchema) {}
 

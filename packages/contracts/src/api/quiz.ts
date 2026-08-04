@@ -161,6 +161,36 @@ export const quizQuestionResponseSchema = z.object({
 });
 export type QuizQuestionResponse = z.infer<typeof quizQuestionResponseSchema>;
 
+/**
+ * 場次題目導覽的單一項目，供跳題選單使用。
+ *
+ * **不含選項與正確答案。** `isCorrect` 沿用與單題端點完全相同的揭露判準
+ * （後端 `canReveal()`）：after_submit 模式交卷前一律為 null。
+ * 少了這個限制，使用者只要打開導覽列就能看到每一題的對錯，
+ * 等於繞過 FR-QUIZ-11——而且是比單題端點更嚴重的洩漏，因為一次全看見。
+ */
+export const quizOutlineItemSchema = z.object({
+  sessionQuestionId: z.string().uuid(),
+  questionId: z.string().uuid(),
+  position: z.number().int(),
+  questionNumber: z.number().int(),
+  type: questionTypeSchema,
+  /** 題幹前段，只夠認出是哪一題。 */
+  stemPreview: z.string(),
+  answered: z.boolean(),
+  /** 尚未揭露時為 null——「還不能說」與「答錯了」不可以塌縮成同一個值。 */
+  isCorrect: z.boolean().nullable(),
+  /** 這題的答案爭議待審，作答為暫記、不計入診斷。 */
+  isProvisional: z.boolean(),
+});
+export type QuizOutlineItem = z.infer<typeof quizOutlineItemSchema>;
+
+export const quizOutlineResponseSchema = z.object({
+  totalQuestions: z.number().int(),
+  items: z.array(quizOutlineItemSchema),
+});
+export type QuizOutlineResponse = z.infer<typeof quizOutlineResponseSchema>;
+
 export const submitAnswerSchema = z
   .object({
     sessionQuestionId: uuidSchema,

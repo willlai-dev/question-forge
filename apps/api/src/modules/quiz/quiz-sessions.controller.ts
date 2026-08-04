@@ -5,6 +5,7 @@ import {
   quizSessionResponseSchema,
   uuidSchema,
   type PaginationMeta,
+  type QuizOutlineResponse,
   type QuizQuestionResponse,
   type QuizResultResponse,
   type QuizSessionResponse,
@@ -17,6 +18,7 @@ import { CurrentUser, type AuthenticatedUser } from '../../common/decorators';
 import {
   CreateQuizSessionDto,
   ListQuizSessionsQueryDto,
+  QuizOutlineResponseDto,
   QuizQuestionResponseDto,
   QuizResultResponseDto,
   QuizSessionResponseDto,
@@ -73,6 +75,21 @@ export class QuizSessionsController {
     @Param('id', new ZodValidationPipe(uuidSchema)) id: string,
   ): Promise<QuizSessionResponse> {
     return this.quizSessions.getSession(user.id, id);
+  }
+
+  @Get(':id/outline')
+  @ApiOperation({
+    summary: '取得整場題目導覽（供跳題選單）',
+    description:
+      '只回傳位置、題號、題幹前段與作答狀態，不含選項與正確答案。' +
+      'isCorrect 沿用與單題端點相同的揭露判準：after_submit 模式交卷前一律為 null（FR-QUIZ-11）。',
+  })
+  @ApiOkResponse({ type: QuizOutlineResponseDto })
+  outline(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ZodValidationPipe(uuidSchema)) id: string,
+  ): Promise<QuizOutlineResponse> {
+    return this.quizSessions.getOutline(user.id, id);
   }
 
   @Get(':id/questions/:position')

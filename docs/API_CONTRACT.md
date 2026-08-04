@@ -222,6 +222,7 @@ uploaded → validating → validated ─────┐
 | `POST` | `/quiz-sessions` | 建立場次 |
 | `GET` | `/quiz-sessions` | 歷史列表 |
 | `GET` | `/quiz-sessions/:id` | 場次狀態與進度 |
+| `GET` | `/quiz-sessions/:id/outline` | 整場題目導覽，供跳題選單（**不含選項與正確答案**） |
 | `GET` | `/quiz-sessions/:id/questions/:position` | 取單題（**選項已依 `option_order` 排好**） |
 | `POST` | `/quiz-sessions/:id/answers` | 作答 |
 | `PATCH` | `/quiz-sessions/:id/answers/:answerId` | 修改答案 |
@@ -271,6 +272,17 @@ uploaded → validating → validated ─────┐
 
 同樣的理由，`GET /quiz-sessions/:id` 的 `correctCount` 在 `after_submit` 模式交卷前為 `null` ——
 那個數字本身就足以反推剛才那題答對沒有。
+
+`GET /quiz-sessions/:id/outline` 是**同一條規則下的第三個出口**。它回傳整場每一題的
+位置、題號、題幹前段與 `answered`，讓前端做跳題導覽；`isCorrect` 則沿用與單題端點
+**完全同一個判準**（後端 `canReveal()`，`resolveReveal()` 也用它），因此
+`after_submit` 模式交卷前每一題都是 `null`。
+
+這個端點比單題端點更需要小心：單題洩漏一次只洩漏一題，導覽列一次洩漏整場。
+判準若各寫一份遲早會分岔，所以抽成共用方法而不是複製條件式。
+
+`isCorrect` 為 `null` 有兩種意思——「還不能說」與「這題還沒作答」。兩者都**不是答錯**，
+前端據此畫成中性色；把 `null` 當成 `false` 會讓整排空白題變成一片紅。
 
 > 這是契約層的硬性保證，不是前端隱藏。`after_submit` 模式下若在交卷前請求結果，回
 > `409 QUIZ_ANSWER_NOT_REVEALED_YET`。端到端測試對整份回應做**遞迴掃描**，

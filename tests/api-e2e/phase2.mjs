@@ -233,6 +233,28 @@ const run = async () => {
     { sessionQuestionId: q2.body.sessionQuestionId, selectedAnswers: ['A'], responseTimeMs: 2500 }, H());
   check('答對 → isCorrect = true', right.body?.reveal?.isCorrect === true);
 
+  // 跳題導覽列。此刻的狀態：第 1 題答錯、第 2 題答對、其餘未作答。
+  const outline = await call('GET', `/quiz-sessions/${sid}/outline`);
+  check('導覽列回傳整場題目', outline.status === 200 && outline.body.items.length === 6,
+    `status=${outline.status} n=${outline.body?.items?.length}`);
+  check('導覽列依 position 排序',
+    outline.body.items.every((item, i) => item.position === i + 1),
+    JSON.stringify(outline.body.items.map((i) => i.position)));
+  check('導覽列標出已作答與未作答',
+    outline.body.items[0].answered === true && outline.body.items[2].answered === false,
+    JSON.stringify(outline.body.items.map((i) => i.answered)));
+  check('即答模式下，已作答的題目在導覽列帶出對錯',
+    outline.body.items[0].isCorrect === false && outline.body.items[1].isCorrect === true,
+    JSON.stringify(outline.body.items.map((i) => i.isCorrect)));
+  // 「還沒作答」與「答錯了」不可以塌縮成同一個值，否則導覽列會把空白題畫成紅的。
+  check('**未作答題目的 isCorrect 是 null，不是 false**',
+    outline.body.items[2].isCorrect === null,
+    `[2].isCorrect=${outline.body.items[2].isCorrect}`);
+  check('導覽列不含選項與正確答案',
+    outline.body.items.every((item) => item.options === undefined && item.correctAnswers === undefined));
+  check('題幹預覽有截斷上限', outline.body.items.every((item) => item.stemPreview.length <= 60),
+    JSON.stringify(outline.body.items.map((i) => i.stemPreview.length)));
+
   const invalidKey = await call('POST', `/quiz-sessions/${sid}/answers`,
     { sessionQuestionId: q2.body.sessionQuestionId, selectedAnswers: ['Z'] }, H());
   check('選項代號不合法 → 400', invalidKey.status === 400, `status=${invalidKey.status}`);
@@ -284,6 +306,18 @@ const run = async () => {
   check('場次進度的 correctCount 為 null（數字本身也是洩漏管道）',
     hiddenSession.body.correctCount === null, `correctCount=${hiddenSession.body.correctCount}`);
 
+  // 導覽列是新開的洩漏管道，而且比單題端點更嚴重——一次可以看見全部題目。
+  const hiddenOutline = await call('GET', `/quiz-sessions/${hid}/outline`);
+  check('**交卷後模式：導覽列整份無任何答案洩漏**',
+    findAnswerLeaks(hiddenOutline.body).length === 0,
+    JSON.stringify(findAnswerLeaks(hiddenOutline.body)));
+  check('**交卷後模式：已作答的題目在導覽列也不給對錯**',
+    hiddenOutline.body.items[0].answered === true && hiddenOutline.body.items[0].isCorrect === null,
+    JSON.stringify({ answered: hiddenOutline.body.items[0].answered,
+      isCorrect: hiddenOutline.body.items[0].isCorrect }));
+  check('交卷後模式：導覽列仍可用來跳題（有位置與題號）',
+    hiddenOutline.body.items.every((item) => item.position > 0 && item.questionNumber > 0));
+
   const earlyResult = await call('GET', `/quiz-sessions/${hid}/result`);
   check('交卷前索取結果 → 409 QUIZ_ANSWER_NOT_REVEALED_YET',
     earlyResult.status === 409 && earlyResult.body.error.code === 'QUIZ_ANSWER_NOT_REVEALED_YET',
@@ -299,6 +333,13 @@ const run = async () => {
 
   const afterSubmitQuestion = await call('GET', `/quiz-sessions/${hid}/questions/1`);
   check('交卷後取題會揭露答案', afterSubmitQuestion.body.reveal !== null);
+
+  const submittedOutline = await call('GET', `/quiz-sessions/${hid}/outline`);
+  check('交卷後導覽列才給出對錯', submittedOutline.body.items[0].isCorrect === false,
+    `[0].isCorrect=${submittedOutline.body.items[0].isCorrect}`);
+  check('交卷後未作答的題目仍是 null（未作答 ≠ 答錯）',
+    submittedOutline.body.items[1].isCorrect === null,
+    `[1].isCorrect=${submittedOutline.body.items[1].isCorrect}`);
 
   const resubmit = await call('POST', `/quiz-sessions/${hid}/submit`, undefined, H());
   check('重複交卷 → 409', resubmit.status === 409 && resubmit.body.error.code === 'QUIZ_SESSION_ALREADY_SUBMITTED');

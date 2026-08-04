@@ -9,6 +9,7 @@ import {
   type CreateQuizSessionRequest,
   type ListQuizSessionsQuery,
   type PaginationMeta,
+  type QuizOutlineResponse,
   type QuizQuestionResponse,
   type QuizResultResponse,
   type QuizReveal,
@@ -25,6 +26,9 @@ import { DATABASE } from '../../infra/infra.module';
 import { MistakeRecordsService } from './mistake-records.service';
 
 type SessionRow = typeof schema.quizSessions.$inferSelect;
+
+/** 導覽列題幹預覽的長度。導覽列是用來「認出是哪一題」，不是用來讀題的。 */
+const OUTLINE_STEM_PREVIEW_CHARS = 60;
 
 /** 建立場次時，出題引擎需要知道的題目資訊。 */
 interface CandidateQuestion {
@@ -471,15 +475,88 @@ export class QuizSessionsService {
       isProvisional: boolean;
     },
   ): QuizReveal | null {
-    const finished = session.status !== 'in_progress';
-    const allowed = finished || (session.revealMode === 'immediate' && input.hasAnswer);
-    if (!allowed) return null;
+    if (!this.canReveal(session, input.hasAnswer)) return null;
 
     return {
       isCorrect: input.isCorrect,
       correctAnswers: input.correctAnswers,
       explanation: input.explanation,
       isProvisional: input.isProvisional,
+    };
+  }
+
+  /**
+   * 「這一題現在可以揭露答案了嗎」——揭露規則的單一判準。
+   *
+   * 抽成獨立方法是因為題目導覽列也要問同一個問題（哪些題可以標對錯）。
+   * 判準各寫一份遲早會分岔，而這裡分岔的後果是交卷前洩漏答案。
+   * 本專案已經在統計層吃過同型的虧：診斷判準散落兩處，
+   * 導致儀表板與錯題頁的數字對不起來。
+   */
+  private canReveal(session: SessionRow, hasAnswer: boolean): boolean {
+    const finished = session.status !== 'in_progress';
+    return finished || (session.revealMode === 'immediate' && hasAnswer);
+  }
+
+  /**
+   * 場次題目導覽：一次取回所有題目的位置與作答狀態，供跳題選單使用。
+   *
+   * **不回傳選項與正確答案**，只回傳「這題答了沒」以及
+   * 在揭露條件成立時才有值的 `isCorrect`。after_submit 模式交卷前
+   * 每一題的 `isCorrect` 都是 null——否則使用者只要打開導覽列，
+   * 就能看到自己每一題對錯，等同繞過 FR-QUIZ-11。
+   */
+  async getOutline(userId: string, sessionId: string): Promise<QuizOutlineResponse> {
+    const session = await this.loadSessionRow(userId, sessionId);
+    const db = this.database.db;
+
+    const rows = await db
+      .select({
+        sessionQuestionId: schema.quizSessionQuestions.id,
+        questionId: schema.questions.id,
+        position: schema.quizSessionQuestions.position,
+        questionNumber: schema.questions.questionNumber,
+        type: schema.questions.type,
+        stem: schema.questions.stem,
+        answerId: schema.userAnswers.id,
+        isCorrect: schema.userAnswers.isCorrect,
+        isProvisional: schema.userAnswers.isProvisional,
+      })
+      .from(schema.quizSessionQuestions)
+      .innerJoin(schema.questions, eq(schema.questions.id, schema.quizSessionQuestions.questionId))
+      // 一題可能有多次作答（修改答案），只取最新那次——與單題端點同樣以
+      // attempt_number 最大者為準。用 LEFT JOIN 加相關子查詢而不是 DISTINCT ON，
+      // 是為了讓沒作答的題目仍然出現在清單裡。
+      .leftJoin(
+        schema.userAnswers,
+        and(
+          eq(schema.userAnswers.sessionQuestionId, schema.quizSessionQuestions.id),
+          sql`user_answers.attempt_number = (
+            select max(ua.attempt_number) from user_answers ua
+            where ua.session_question_id = quiz_session_questions.id
+          )`,
+        ),
+      )
+      .where(eq(schema.quizSessionQuestions.sessionId, sessionId))
+      .orderBy(schema.quizSessionQuestions.position);
+
+    return {
+      totalQuestions: session.totalQuestions,
+      items: rows.map((row) => {
+        const hasAnswer = row.answerId !== null;
+        return {
+          sessionQuestionId: row.sessionQuestionId,
+          questionId: row.questionId,
+          position: row.position,
+          questionNumber: row.questionNumber,
+          type: row.type,
+          // 只給預覽長度，導覽列不是拿來讀題的。
+          stemPreview: row.stem.slice(0, OUTLINE_STEM_PREVIEW_CHARS),
+          answered: hasAnswer,
+          isCorrect: this.canReveal(session, hasAnswer) ? (row.isCorrect ?? null) : null,
+          isProvisional: row.isProvisional ?? false,
+        };
+      }),
     };
   }
 
