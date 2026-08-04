@@ -124,9 +124,13 @@ export class MockAiProvider implements AiProvider {
               },
             ],
           },
-          citations: context.sourceIds.slice(0, 2).map((sourceId) => ({
+          // 引用一律逐字取自來源正文。捏造測試路徑則刻意寫一段來源裡沒有的話，
+          // 讓原文查核在端到端流程中真的被觸發一次。
+          citations: context.sourceIds.slice(0, 2).map((sourceId, index) => ({
             sourceId,
-            quote: '（模擬）引用的原文片段。',
+            quote: context.expectFabricatedQuote
+              ? '（模擬）這段話並不存在於任何來源正文之中。'
+              : (context.sourceExcerpts[index] ?? null),
             relevance: 'direct',
           })),
           confidence: 0.85,
@@ -220,6 +224,8 @@ interface MockContext {
   optionKeys: string[];
   correctAnswers: string[];
   sourceIds: string[];
+  /** 與 sourceIds 同序，逐字取自各來源正文開頭，供 Mock 產生合法引用。 */
+  sourceExcerpts: string[];
   userWasCorrect: boolean;
   allowedKnowledgeTags: string[];
   allowedSkillTags: string[];
@@ -227,6 +233,8 @@ interface MockContext {
   fallbackErrorTypeCode: string;
   /** 題幹含衝突標記時為 true，用來走「AI 質疑題庫答案」的路徑。 */
   expectConflict: boolean;
+  /** 題幹含捏造引用標記時為 true，用來證明原文查核真的會擋下來。 */
+  expectFabricatedQuote: boolean;
 
   // --- 多題整合分析（Phase 5）---
   knowledgeTagNames: string[];
@@ -242,17 +250,31 @@ interface MockContext {
 /** 題幹含這段文字時，Mock 會回報答案衝突。僅供測試用。 */
 export const MOCK_CONFLICT_MARKER = '【衝突測試】';
 
+/**
+ * 題幹含這段文字時，Mock 會捏造一段來源裡沒有的引用。僅供測試用。
+ *
+ * 沒有這條路徑，「引用必須逐字出自來源」就只能靠讀程式碼相信它會動
+ * ——而這正是原本的缺陷：#16 的來源存在性檢查寫得很完整，
+ * 卻從來沒有任何測試證明它擋得住「真實來源 + 捏造內容」。
+ */
+export const MOCK_FABRICATED_QUOTE_MARKER = '【捏造引用測試】';
+
+/** Mock 從來源正文取多長當作引用。夠長才有辨識度，太長則容易撞到截斷邊界。 */
+export const MOCK_EXCERPT_CHARS = 40;
+
 function parseMockContext(request: AiCompletionRequest): MockContext {
   const empty: MockContext = {
     optionKeys: ['A', 'B'],
     correctAnswers: ['A'],
     sourceIds: [],
+    sourceExcerpts: [],
     userWasCorrect: true,
     allowedKnowledgeTags: [],
     allowedSkillTags: [],
     allowedErrorTypeCodes: [],
     fallbackErrorTypeCode: 'undetermined',
     expectConflict: false,
+    expectFabricatedQuote: false,
     knowledgeTagNames: [],
     knowledgeTagAccuracies: [],
     errorTypeCodes: [],

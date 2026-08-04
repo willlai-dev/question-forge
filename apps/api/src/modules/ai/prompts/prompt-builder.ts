@@ -6,7 +6,12 @@ import type {
   ResearchPlan,
 } from '@repo/contracts';
 
-import { MOCK_CONFLICT_MARKER, MOCK_CONTEXT_MARKER } from '../providers/mock-ai.provider';
+import {
+  MOCK_CONFLICT_MARKER,
+  MOCK_CONTEXT_MARKER,
+  MOCK_EXCERPT_CHARS,
+  MOCK_FABRICATED_QUOTE_MARKER,
+} from '../providers/mock-ai.provider';
 import type { AiChatMessage } from '../providers/ai-provider';
 import { SYSTEM_PROMPTS, wrapUntrustedContent } from './prompt-templates';
 
@@ -156,12 +161,16 @@ export class PromptBuilder {
         optionKeys: question.options.map((o) => o.key),
         correctAnswers: question.correctAnswers,
         sourceIds: sources.map((s) => s.sourceId),
+        // 逐字取自來源開頭，讓 Mock 的引用真的通得過原文查核
+        // ——而不是靠繞過檢查讓測試變綠。
+        sourceExcerpts: sources.map((s) => s.content.slice(0, MOCK_EXCERPT_CHARS)),
         userWasCorrect: userAnswer ? userAnswer.isCorrect : true,
         allowedKnowledgeTags: vocabulary.knowledgeTags,
         allowedSkillTags: vocabulary.skillTags,
         allowedErrorTypeCodes: vocabulary.errorTypes.map((t) => t.code),
         fallbackErrorTypeCode: vocabulary.fallbackErrorTypeCode,
         expectConflict: question.stem.includes(MOCK_CONFLICT_MARKER),
+        expectFabricatedQuote: question.stem.includes(MOCK_FABRICATED_QUOTE_MARKER),
       }),
     ].join('\n');
 

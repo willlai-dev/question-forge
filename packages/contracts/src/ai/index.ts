@@ -1,4 +1,5 @@
 export * from './common';
+export * from './numeric-consistency';
 export * from './schemas';
 export * from './json-schema';
 // 注意：cache-key 依賴 node:crypto，刻意不從這裡匯出。

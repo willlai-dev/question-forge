@@ -177,10 +177,14 @@ export class QuestionAnalysisService {
       requestSchema: finalExplanationSchema,
       responseSchema: buildFinalExplanationSchema({
         allowedSourceIds: new Set(sources.map((s) => s.sourceId)),
+        // 用送出去的那份內容（已截斷）比對引用，而不是原始全文。
+        sourceContents: new Map(sources.map((s) => [s.sourceId, s.content])),
         optionKeys: new Set(question.options.map((o) => o.key)),
         allowedErrorTypeCodes: new Set(vocabulary.errorTypes.map((t) => t.code)),
         fallbackErrorTypeCode: vocabulary.fallbackErrorTypeCode,
         researchMode: plan.researchMode,
+        // 沒有來源時證據信心講的是「沒有證據」，不能拿來當解析的上限。
+        evidenceConfidence: sources.length > 0 ? synthesis.confidence : null,
       }),
       maxTokens: this.env.AI_MAX_TOKENS_FINAL,
       reasoningEffort: this.env.AI_REASONING_EFFORT_FINAL,

@@ -261,6 +261,18 @@ const run = async () => {
       personalCitations.length > 0 && personalCitations.every((c) => q2SourceIds.has(c.sourceId)),
       JSON.stringify(personalCitations.map((c) => c.sourceId)));
 
+    // 指向存在的來源還不夠——引用的內容也必須真的出自那份來源。
+    // 少了這一條，下面「捏造引用會被擋下」也可能只是因為引用永遠被擋而變綠。
+    const q2Snippets = new Map(
+      (withAnswerAnalysis.body?.sources ?? []).map((s) => [s.sourceId, s.contentSnippet ?? '']),
+    );
+    const quoted = personalCitations.filter((c) => typeof c.quote === 'string');
+    const strip = (text) => text.replace(/\s+/g, '');
+    check('**引用的原文逐字出自該來源正文**',
+      quoted.length > 0 &&
+        quoted.every((c) => strip(q2Snippets.get(c.sourceId) ?? '').includes(strip(c.quote))),
+      `quoted=${quoted.length}/${personalCitations.length}`);
+
     const beforeHash = (await call('GET', '/ai/usage')).body.totalCalls;
     const cacheJob = await call('POST', `/ai/questions/${q2.id}/analyze`, { force: false }, H());
     check('不帶作答時的冪等鍵不同，建立的是新任務',
@@ -274,6 +286,39 @@ const run = async () => {
     check('**命中快取的新任務沒有呼叫模型**', afterHash === beforeHash,
       `${beforeHash} → ${afterHash}`);
   }
+
+  // 指向真實來源不等於引用真實內容。
+  //
+  // 原本的驗證只檢查 sourceId 存在（驗收 #16），擋得住「憑空生出 S9」，
+  // 卻擋不住「指向真的存在的 S1，然後編造它說過的話」——後者實際發生過：
+  // 一次解析對財政部 PDF 捏造了逐字引用，裡面的稅率換算還是錯的，
+  // 而當時所有驗證全數通過。這一段就是那個缺口的迴歸測試。
+  console.log('\n=== 捏造的引用會被擋下 ===');
+  const fabricated = (await call('POST', '/questions', {
+    questionGroupId: group.body.id,
+    // 95：90 已被後面「沒分析過的題目」那條佔用，同題組的題號不可重複。
+    questionNumber: 95,
+    type: 'single_choice',
+    stem: '第 95 題【捏造引用測試】：下列何者屬於行政處分？',
+    options: [
+      { key: 'A', text: '拆除命令', isCorrect: true },
+      { key: 'B', text: '行政指導', isCorrect: false },
+      { key: 'C', text: '行政計畫', isCorrect: false },
+    ],
+    explanation: null,
+    reviewRequired: false,
+  }, H())).body;
+
+  const fabricatedJob = await call('POST', `/ai/questions/${fabricated.id}/analyze`, { force: false }, H());
+  const fabricatedDone = await waitForJob(fabricatedJob.body.id);
+  check('**引用內容不在來源中時，分析失敗而不是照樣存起來**',
+    fabricatedDone.status === 'failed', String(fabricatedDone.status));
+  check('失敗原因指出是引用原文查核擋下的',
+    String(fabricatedDone.errorMessage ?? '').includes('並未出現在來源'),
+    String(fabricatedDone.errorMessage).slice(0, 200));
+  const noEnrichment = await call('GET', `/questions/${fabricated.id}/analysis`);
+  check('**被擋下的解析沒有落到資料庫**', noEnrichment.status === 404,
+    `status=${noEnrichment.status}`);
 
   console.log('\n=== 題目內容變更會使快取失效 ===');
   const edited = await call('PATCH', `/questions/${q1.id}`, {

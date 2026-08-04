@@ -162,12 +162,16 @@ describe('evidenceSynthesisSchema 語意驗證', () => {
 });
 
 describe('finalExplanationSchema 語意驗證', () => {
+  const S1_CONTENT = '本條規定之要件包括甲、乙、丙三項，缺一不可。\n施行日期另以命令定之。';
+
   const context = {
     allowedSourceIds: new Set(['S1']),
+    sourceContents: new Map([['S1', S1_CONTENT]]),
     optionKeys: new Set(['A', 'B', 'C']),
     allowedErrorTypeCodes: new Set(['concept_confusion', 'undetermined']),
     fallbackErrorTypeCode: 'undetermined',
     researchMode: 'WEB_RESEARCH' as const,
+    evidenceConfidence: 0.95,
   };
   const schema = buildFinalExplanationSchema(context);
 
@@ -321,6 +325,145 @@ describe('finalExplanationSchema 語意驗證', () => {
   it('MODEL_ONLY 模式且沒有引用 → 通過', () => {
     const modelOnly = buildFinalExplanationSchema({ ...context, researchMode: 'MODEL_ONLY' });
     const result = modelOnly.safeParse({ ...valid, citations: [] });
+    expect(result.success).toBe(true);
+  });
+
+  // --- 引用原文查核 ---
+  //
+  // 這一組的存在理由是一次真實的錯誤解析：模型指向一份真實的財政部 PDF（S4 存在，
+  // 通得過 #16 的來源檢查），卻捏造了一段那份文件裡沒有的逐字引用，
+  // 而捏造的內容裡帶著錯誤的稅率換算。指向真實來源不等於引用真實內容。
+
+  it('引用逐字取自來源 → 通過', () => {
+    const result = schema.safeParse({
+      ...valid,
+      citations: [{ sourceId: 'S1', quote: '本條規定之要件包括甲、乙、丙三項', relevance: 'direct' }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('**引用真實來源但內容是捏造的 → 擋下**', () => {
+    const result = schema.safeParse({
+      ...valid,
+      citations: [
+        { sourceId: 'S1', quote: '本條規定之要件包括甲、乙、丙、丁四項', relevance: 'direct' },
+      ],
+    });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result)).toContain('並未出現在來源 S1');
+  });
+
+  it('錯誤訊息要指出 quote 可以填 null，重生才有合法退路', () => {
+    const result = schema.safeParse({
+      ...valid,
+      citations: [{ sourceId: 'S1', quote: '完全捏造的一句話', relevance: 'direct' }],
+    });
+    expect(JSON.stringify(result)).toContain('null');
+  });
+
+  it('空白差異不影響比對（來源換行、引用不換行）', () => {
+    const result = schema.safeParse({
+      ...valid,
+      citations: [
+        { sourceId: 'S1', quote: '缺一不可。施行日期另以命令定之。', relevance: 'direct' },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('用省略號串接同一份文件的不連續片段 → 通過', () => {
+    const result = schema.safeParse({
+      ...valid,
+      citations: [{ sourceId: 'S1', quote: '本條規定之要件…施行日期另以命令定之', relevance: 'direct' }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('省略號串接時，只要有一段是捏造的就擋下', () => {
+    const result = schema.safeParse({
+      ...valid,
+      citations: [{ sourceId: 'S1', quote: '本條規定之要件…本法自公布日施行', relevance: 'direct' }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('quote 為 null → 通過（模型無法逐字引用時的合法選擇）', () => {
+    const result = schema.safeParse({
+      ...valid,
+      citations: [{ sourceId: 'S1', quote: null, relevance: 'background' }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  // --- 數字自相矛盾 ---
+
+  it('**選項理由裡分數與百分比對不起來 → 擋下**', () => {
+    const result = schema.safeParse({
+      ...valid,
+      optionAnalysis: [
+        { key: 'A', isCorrect: true, reason: '稅率為契約金額的0.02%（10萬分之2）。' },
+        { key: 'B', isCorrect: false, reason: '錯誤' },
+        { key: 'C', isCorrect: false, reason: '錯誤' },
+      ],
+    });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result)).toContain('自相矛盾');
+  });
+
+  it('換算正確的分數與百分比 → 通過', () => {
+    const result = schema.safeParse({
+      ...valid,
+      optionAnalysis: [
+        { key: 'A', isCorrect: true, reason: '稅率為契約金額的0.002%（10萬分之2）。' },
+        { key: 'B', isCorrect: false, reason: '按權利金金額課徵千分之1，即0.1%。' },
+        { key: 'C', isCorrect: false, reason: '錯誤' },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('核心概念裡的矛盾也會被抓到（不是只看選項）', () => {
+    const result = schema.safeParse({
+      ...valid,
+      explanation: { ...valid.explanation, coreConcept: '期貨交易稅為0.02%（十萬分之二）。' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  // --- 信心上限 ---
+
+  it('**最終信心高於證據階段 → 擋下**', () => {
+    const result = schema.safeParse({ ...valid, confidence: 1 });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result)).toContain('證據階段');
+  });
+
+  it('答案驗證信心高於證據階段 → 擋下', () => {
+    const result = schema.safeParse({
+      ...valid,
+      answerValidation: { ...valid.answerValidation, confidence: 0.99 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('信心等於證據階段 → 通過（上限是包含的）', () => {
+    const result = schema.safeParse({
+      ...valid,
+      confidence: 0.95,
+      answerValidation: { ...valid.answerValidation, confidence: 0.95 },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('沒有任何來源時不套用信心上限', () => {
+    // 證據階段在沒有來源時給的低信心講的是「沒有證據」，
+    // 拿它當上限會把所有不需查證的題目一律壓到低分。
+    const noEvidence = buildFinalExplanationSchema({
+      ...context,
+      researchMode: 'MODEL_ONLY',
+      evidenceConfidence: null,
+    });
+    const result = noEvidence.safeParse({ ...valid, citations: [], confidence: 1 });
     expect(result.success).toBe(true);
   });
 });

@@ -4,10 +4,12 @@ import {
   aiOptionKeySchema,
   citationSchema,
   confidenceSchema,
+  refineCitationQuotes,
   refineSourceIds,
   researchModeSchema,
   WEB_RESEARCH_MODES,
 } from './common';
+import { findNumericInconsistencies, formatPercent } from './numeric-consistency';
 
 /**
  * 三階段 AI 的輸出 Schema 與語意驗證（docs/AI_ANALYSIS_SCHEMAS.md §1、§3、§4）。
@@ -260,6 +262,13 @@ export type FinalExplanation = z.infer<typeof finalExplanationBase>;
 
 export interface FinalExplanationContext {
   allowedSourceIds: ReadonlySet<string>;
+  /**
+   * sourceId → 送進模型的來源正文，用來驗證 quote 確實出自該來源。
+   *
+   * 必須是**實際送出的那份內容**（截斷後），不是原始全文——
+   * 否則會要求模型逐字引用它根本沒看到的段落。
+   */
+  sourceContents: ReadonlyMap<string, string>;
   /** 該題所有選項代號，順序無關。 */
   optionKeys: ReadonlySet<string>;
   /** 目前啟用的錯誤類型 code。 */
@@ -267,6 +276,13 @@ export interface FinalExplanationContext {
   /** fallback 錯誤類型的 code（「無法判定」）。 */
   fallbackErrorTypeCode: string;
   researchMode: z.infer<typeof researchModeSchema>;
+  /**
+   * 證據階段給出的信心，作為最終信心的上限。
+   *
+   * 沒有任何來源時為 null：此時證據階段的信心反映的是「沒有證據」，
+   * 拿它當上限會把所有不需查證的題目一律壓到低分，那不是這條規則的用意。
+   */
+  evidenceConfidence: number | null;
 }
 
 export function buildFinalExplanationSchema(context: FinalExplanationContext) {
@@ -368,6 +384,9 @@ export function buildFinalExplanationSchema(context: FinalExplanationContext) {
       ['citations'],
     );
 
+    // 指向真實來源還不夠，引用的內容也必須真的出自那份來源。
+    refineCitationQuotes(value.citations, context.sourceContents, ctx, ['citations']);
+
     // 沒查資料就不可能有引用。
     if (context.researchMode === 'MODEL_ONLY' && value.citations.length > 0) {
       ctx.addIssue({
@@ -376,7 +395,75 @@ export function buildFinalExplanationSchema(context: FinalExplanationContext) {
         message: 'MODEL_ONLY 模式不應有任何引用',
       });
     }
+
+    // 純算術的自我矛盾，例如「0.02%（10萬分之2）」。
+    for (const target of numericTargets(value)) {
+      for (const issue of findNumericInconsistencies(target.text)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: target.path,
+          message:
+            `數字自相矛盾：「${issue.fraction}」等於 ${formatPercent(issue.fractionAsPercent)}%，` +
+            `但同一處寫的是 ${formatPercent(issue.statedPercent)}%。請確認換算後改成一致的寫法。`,
+        });
+      }
+    }
+
+    // 解析的信心不得高於它所依據的證據。
+    if (context.evidenceConfidence !== null) {
+      const ceiling = context.evidenceConfidence;
+      if (value.confidence > ceiling) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['confidence'],
+          message: `信心 ${value.confidence} 高於證據階段的 ${ceiling}，解析不可能比它依據的證據更確定`,
+        });
+      }
+      if (value.answerValidation.confidence > ceiling) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['answerValidation', 'confidence'],
+          message: `答案驗證信心 ${value.answerValidation.confidence} 高於證據階段的 ${ceiling}`,
+        });
+      }
+    }
   });
+}
+
+/**
+ * 要做數字一致性檢查的欄位。
+ *
+ * 涵蓋所有會直接顯示給使用者的敘述文字。實際出錯的那次，矛盾同時出現在
+ * coreConcept 與 optionAnalysis[].reason——只檢查其中一個會漏掉另一個。
+ */
+function numericTargets(
+  value: z.infer<typeof finalExplanationBase>,
+): { text: string; path: (string | number)[] }[] {
+  const targets: { text: string; path: (string | number)[] }[] = [
+    { text: value.explanation.coreConcept, path: ['explanation', 'coreConcept'] },
+    { text: value.explanation.summary, path: ['explanation', 'summary'] },
+    ...value.explanation.solutionSteps.map((step, index) => ({
+      text: step,
+      path: ['explanation', 'solutionSteps', index],
+    })),
+    ...value.optionAnalysis.map((option, index) => ({
+      text: option.reason,
+      path: ['optionAnalysis', index, 'reason'],
+    })),
+    ...value.mistakeAnalysis.missedConditions.map((condition, index) => ({
+      text: condition,
+      path: ['mistakeAnalysis', 'missedConditions', index],
+    })),
+  ];
+
+  if (value.mistakeAnalysis.whyUserMightBeWrong !== null) {
+    targets.push({
+      text: value.mistakeAnalysis.whyUserMightBeWrong,
+      path: ['mistakeAnalysis', 'whyUserMightBeWrong'],
+    });
+  }
+
+  return targets;
 }
 
 // ------------------------------------------------------------ ④ 多題整合分析
