@@ -218,7 +218,17 @@ const finalExplanationBase = z
           .object({
             key: aiOptionKeySchema,
             isCorrect: z.boolean(),
-            reason: z.string().min(1).max(1000),
+            /**
+             * 每個選項都要有判斷依據，不能只給結論。
+             *
+             * 下限 10 個字擋的是「不正確」「不符合題意」這種光下判斷的回答——
+             * 那對使用者沒有任何價值，尤其在答對的情況下：
+             * 答對只代表這次選對，不代表知道其他選項為什麼錯。
+             *
+             * 這是**結構下限**而不是品質保證。長度擋不住空話，
+             * 真正要求對照說明的是 prompt；這裡只負責讓最明顯的敷衍過不了關。
+             */
+            reason: z.string().min(10, '選項說明必須寫出判斷依據，不能只給結論').max(1000),
           })
           .strict(),
       )

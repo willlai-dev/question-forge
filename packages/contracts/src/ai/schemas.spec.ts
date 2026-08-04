@@ -184,9 +184,9 @@ describe('finalExplanationSchema 語意驗證', () => {
     },
     explanation: { coreConcept: '概念', solutionSteps: ['步驟一'], summary: '總結' },
     optionAnalysis: [
-      { key: 'A', isCorrect: true, reason: '正確' },
-      { key: 'B', isCorrect: false, reason: '錯誤' },
-      { key: 'C', isCorrect: false, reason: '錯誤' },
+      { key: 'A', isCorrect: true, reason: '符合題目所述的全部要件，逐項對得上。' },
+      { key: 'B', isCorrect: false, reason: '缺少法定的書面通知要件，因此不成立。' },
+      { key: 'C', isCorrect: false, reason: '屬於行政計畫，適用的是另一套程序規定。' },
     ],
     mistakeAnalysis: {
       userWasCorrect: false,
@@ -208,6 +208,55 @@ describe('finalExplanationSchema 語意驗證', () => {
     expect(schema.safeParse(valid).success).toBe(true);
   });
 
+  // 逐選項說明的下限。
+  //
+  // 起因：使用者反映答對的題目，錯誤選項只被一句話帶過。1.0.0 的 prompt
+  // 開頭就把任務框成「分析使用者為什麼答錯」，答對時模型自然會簡化。
+  // 但答對只代表這次選對，不代表知道其他選項為什麼錯。
+
+  it('**選項說明只給結論 → 擋下**', () => {
+    const result = schema.safeParse({
+      ...valid,
+      optionAnalysis: [
+        { key: 'A', isCorrect: true, reason: '這個選項完全符合題目所述的要件。' },
+        { key: 'B', isCorrect: false, reason: '不正確' },
+        { key: 'C', isCorrect: false, reason: '這個選項缺少法定的書面通知要件。' },
+      ],
+    });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result)).toContain('判斷依據');
+  });
+
+  it('答對的情境下，錯誤選項的說明一樣要達標', () => {
+    const result = schema.safeParse({
+      ...valid,
+      mistakeAnalysis: {
+        ...valid.mistakeAnalysis,
+        userWasCorrect: true,
+        whyUserMightBeWrong: null,
+        errorTypeCode: 'undetermined',
+      },
+      optionAnalysis: [
+        { key: 'A', isCorrect: true, reason: '符合題目要求的全部三項要件，逐項對得上。' },
+        { key: 'B', isCorrect: false, reason: '不符合' },
+        { key: 'C', isCorrect: false, reason: '適用的是另一條規定，稅率並不相同。' },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('寫出判斷依據的選項說明 → 通過', () => {
+    const result = schema.safeParse({
+      ...valid,
+      optionAnalysis: [
+        { key: 'A', isCorrect: true, reason: '符合題目要求的全部三項要件，逐項對得上。' },
+        { key: 'B', isCorrect: false, reason: '缺少法定的書面通知要件，因此不成立。' },
+        { key: 'C', isCorrect: false, reason: '適用的是另一條規定，容易與本題概念混淆。' },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
   it('漏了某個選項的分析 → 擋下', () => {
     const result = schema.safeParse({
       ...valid,
@@ -219,7 +268,10 @@ describe('finalExplanationSchema 語意驗證', () => {
   it('分析了不存在的選項 → 擋下', () => {
     const result = schema.safeParse({
       ...valid,
-      optionAnalysis: [...valid.optionAnalysis, { key: 'Z', isCorrect: false, reason: 'x' }],
+      optionAnalysis: [
+        ...valid.optionAnalysis,
+        { key: 'Z', isCorrect: false, reason: '這個選項在題目中根本不存在。' },
+      ],
     });
     expect(result.success).toBe(false);
   });
@@ -402,8 +454,8 @@ describe('finalExplanationSchema 語意驗證', () => {
       ...valid,
       optionAnalysis: [
         { key: 'A', isCorrect: true, reason: '稅率為契約金額的0.02%（10萬分之2）。' },
-        { key: 'B', isCorrect: false, reason: '錯誤' },
-        { key: 'C', isCorrect: false, reason: '錯誤' },
+        { key: 'B', isCorrect: false, reason: '屬於權利金課徵，與本題的稅基不同。' },
+        { key: 'C', isCorrect: false, reason: '屬於證券交易稅的範圍，不是期貨交易稅。' },
       ],
     });
     expect(result.success).toBe(false);
@@ -416,7 +468,7 @@ describe('finalExplanationSchema 語意驗證', () => {
       optionAnalysis: [
         { key: 'A', isCorrect: true, reason: '稅率為契約金額的0.002%（10萬分之2）。' },
         { key: 'B', isCorrect: false, reason: '按權利金金額課徵千分之1，即0.1%。' },
-        { key: 'C', isCorrect: false, reason: '錯誤' },
+        { key: 'C', isCorrect: false, reason: '屬於證券交易稅的範圍，不是期貨交易稅。' },
       ],
     });
     expect(result.success).toBe(true);

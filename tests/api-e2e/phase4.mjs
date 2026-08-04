@@ -320,6 +320,59 @@ const run = async () => {
   check('**被擋下的解析沒有落到資料庫**', noEnrichment.status === 404,
     `status=${noEnrichment.status}`);
 
+  // 答對的題目一樣要逐選項說明。
+  //
+  // 起因：使用者反映答對時，錯誤選項只被一句話帶過。prompt 1.0.0 開頭寫的是
+  // 「產生完整解析，並分析使用者為什麼答錯」，整個任務被框成錯因分析，
+  // 答對時模型自然會簡化。但答對只代表這次選對，不代表知道其他選項為什麼錯。
+  console.log('\n=== 答對時逐選項說明不得縮水 ===');
+  const correctQ = (await makeQuestion(96)).body;
+  const correctSession = await call('POST', '/quiz-sessions',
+    { scopes: [{ scopeType: 'question_group', refId: group.body.id }], questionLimit: 50 }, H());
+  let correctAnswerId = null;
+  for (let p = 1; p <= correctSession.body.totalQuestions; p += 1) {
+    const q = await call('GET', `/quiz-sessions/${correctSession.body.id}/questions/${p}`);
+    if (q.body.questionId !== correctQ.id) continue;
+    // A 是正確答案。
+    const submitted = await call('POST', `/quiz-sessions/${correctSession.body.id}/answers`,
+      { sessionQuestionId: q.body.sessionQuestionId, selectedAnswers: ['A'] }, H());
+    check('這一題確實答對了', submitted.body?.reveal?.isCorrect === true,
+      JSON.stringify(submitted.body?.reveal));
+    correctAnswerId = submitted.body?.answerId ?? null;
+    break;
+  }
+  check('取得答對的作答', correctAnswerId !== null);
+
+  if (correctAnswerId) {
+    const correctJob = await call('POST', `/ai/questions/${correctQ.id}/analyze`,
+      { force: false, userAnswerId: correctAnswerId }, H());
+    const correctDone = await waitForJob(correctJob.body.id);
+    check('答對的題目一樣會產生解析', correctDone.status === 'completed',
+      `status=${correctDone.status} ${String(correctDone.errorMessage).slice(0, 150)}`);
+
+    const correctAnalysis = await call('GET',
+      `/questions/${correctQ.id}/analysis?userAnswerId=${correctAnswerId}`);
+    const opts = correctAnalysis.body?.optionAnalysis ?? [];
+    check('答對時仍涵蓋每一個選項', opts.length === 3,
+      JSON.stringify(opts.map((o) => o.key)));
+
+    // 這是使用者反映的問題本身：答對時錯誤選項被一句話帶過。
+    const wrongOpts = opts.filter((o) => !o.isCorrect);
+    check('**答對時，每個錯誤選項都有實質說明（非只給結論）**',
+      wrongOpts.length === 2 && wrongOpts.every((o) => o.reason.length >= 10),
+      JSON.stringify(wrongOpts.map((o) => ({ key: o.key, len: o.reason.length }))));
+    check('答對時，正確選項也要說明為什麼是它',
+      opts.some((o) => o.isCorrect && o.reason.length >= 10),
+      JSON.stringify(opts.filter((o) => o.isCorrect).map((o) => o.reason.length)));
+
+    check('答對時個人化區塊仍存在，且標記為答對',
+      correctAnalysis.body?.personalized?.userWasCorrect === true,
+      JSON.stringify(correctAnalysis.body?.personalized?.userWasCorrect));
+    check('答對時不硬套錯因（whyWrong 為 null）',
+      correctAnalysis.body?.personalized?.whyWrong === null,
+      String(correctAnalysis.body?.personalized?.whyWrong).slice(0, 80));
+  }
+
   console.log('\n=== 題目內容變更會使快取失效 ===');
   const edited = await call('PATCH', `/questions/${q1.id}`, {
     questionNumber: 1,
