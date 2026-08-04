@@ -152,7 +152,10 @@ function ConflictsView() {
                       // 章節筆記沒有 URL，只能以純文字呈現。
                       source.url === null ? (
                         <p key={source.sourceId} className="block text-xs">
-                          {source.sourceId}：{source.title}（你的章節筆記）
+                          <span className="font-mono text-[10px] text-muted-foreground">
+                            {source.sourceId}
+                          </span>{' '}
+                          {source.title}（你的章節筆記）
                         </p>
                       ) : (
                         <a
@@ -162,7 +165,10 @@ function ConflictsView() {
                           rel="noopener noreferrer"
                           className="block text-xs underline underline-offset-4"
                         >
-                          {source.sourceId}：{source.title}（{source.domain}）
+                          <span className="font-mono text-[10px] text-muted-foreground">
+                            {source.sourceId}
+                          </span>{' '}
+                          {source.title}（{source.domain}）
                         </a>
                       ),
                     )}

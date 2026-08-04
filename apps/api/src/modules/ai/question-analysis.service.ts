@@ -217,7 +217,40 @@ export class QuestionAnalysisService {
       promptVersion: this.promptSeed.activeVersion('final_explanation'),
     });
 
-    return this.stripUnverifiableQuotes(data, sources);
+    const cleaned = this.stripUnverifiableQuotes(data, sources);
+    return this.clampConfidence(cleaned, sources.length > 0 ? synthesis.confidence : null);
+  }
+
+  /**
+   * 把信心夾到證據階段給的上限。
+   *
+   * 解析不可能比它依據的證據更確定。這個性質原本用硬性驗證守，
+   * 但模型很愛給 1.0，一被退回就整段重生——而 final_explanation 一次 84 秒。
+   * 為了把 1.0 改成 0.96 付掉一分半鐘，划不來。
+   *
+   * 夾住是無損的：上限本來就來自同一次分析的證據階段，
+   * 直接取 min 得到的結果與模型「照規則重寫一次」應該給的值相同。
+   */
+  private clampConfidence(
+    final: FinalExplanation,
+    evidenceConfidence: number | null,
+  ): FinalExplanation {
+    if (evidenceConfidence === null) return final;
+
+    const capped = Math.min(final.confidence, evidenceConfidence);
+    const cappedAnswer = Math.min(final.answerValidation.confidence, evidenceConfidence);
+    if (capped === final.confidence && cappedAnswer === final.answerValidation.confidence) {
+      return final;
+    }
+
+    this.logger.log(
+      `信心已夾到證據上限 ${evidenceConfidence}（原為 ${final.confidence} / ${final.answerValidation.confidence}）`,
+    );
+    return {
+      ...final,
+      confidence: capped,
+      answerValidation: { ...final.answerValidation, confidence: cappedAnswer },
+    };
   }
 
   /**

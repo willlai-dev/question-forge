@@ -414,26 +414,20 @@ describe('finalExplanationSchema 語意驗證', () => {
   });
 
   // --- 信心上限 ---
+  //
+  // 這裡**不再擋**。改由 QuestionAnalysisService 夾住：
+  // 模型很愛給 1.0，一被退回就整段重生，而 final_explanation 一次要 84 秒。
+  // 實際用量紀錄裡有 3 次重生純粹是為了把 1.0 改成 0.96 ——
+  // 為了一個數字付掉一分半鐘。夾住是無損的：上限本來就來自同一次分析的證據階段。
 
-  it('**最終信心高於證據階段 → 擋下**', () => {
-    const result = schema.safeParse({ ...valid, confidence: 1 });
-    expect(result.success).toBe(false);
-    expect(JSON.stringify(result)).toContain('證據階段');
+  it('信心高於證據階段不再擋下（改由 service 夾住）', () => {
+    expect(schema.safeParse({ ...valid, confidence: 1 }).success).toBe(true);
   });
 
-  it('答案驗證信心高於證據階段 → 擋下', () => {
+  it('答案驗證信心高於證據階段也不再擋下', () => {
     const result = schema.safeParse({
       ...valid,
       answerValidation: { ...valid.answerValidation, confidence: 0.99 },
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it('信心等於證據階段 → 通過（上限是包含的）', () => {
-    const result = schema.safeParse({
-      ...valid,
-      confidence: 0.95,
-      answerValidation: { ...valid.answerValidation, confidence: 0.95 },
     });
     expect(result.success).toBe(true);
   });

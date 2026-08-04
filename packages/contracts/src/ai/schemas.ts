@@ -469,24 +469,16 @@ export function buildFinalExplanationSchema(context: FinalExplanationContext) {
       }
     }
 
-    // 解析的信心不得高於它所依據的證據。
-    if (context.evidenceConfidence !== null) {
-      const ceiling = context.evidenceConfidence;
-      if (value.confidence > ceiling) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['confidence'],
-          message: `信心 ${value.confidence} 高於證據階段的 ${ceiling}，解析不可能比它依據的證據更確定`,
-        });
-      }
-      if (value.answerValidation.confidence > ceiling) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['answerValidation', 'confidence'],
-          message: `答案驗證信心 ${value.answerValidation.confidence} 高於證據階段的 ${ceiling}`,
-        });
-      }
-    }
+    /*
+     * 信心上限**不在這裡**擋。
+     *
+     * 它曾經是硬性驗證，實測代價太高：模型很愛給 1.0，一被退回就整段重生，
+     * 而 final_explanation 一次要 84 秒。用量紀錄裡有 3 次重生純粹是為了
+     * 把 1.0 改成 0.96——為了一個數字付掉一分半鐘。
+     *
+     * 「解析不可能比它依據的證據更確定」這個性質，用**夾住**達成就夠了，
+     * 由 QuestionAnalysisService 在取得結果後處理。
+     */
   });
 }
 

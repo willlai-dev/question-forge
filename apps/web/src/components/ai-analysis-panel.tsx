@@ -328,11 +328,17 @@ function AnalysisContent({ data }: { data: QuestionAnalysisResponse }) {
           <div className="space-y-1.5">
             {data.sources.map((source) => (
               <div key={source.sourceId} className="flex items-start gap-2 text-sm">
+                {/*
+                  來源編號是給「對照引用」用的，不是重點資訊。
+                  原本是填色的膠囊標籤，視覺份量比它旁邊的標題還重。
+                  改成等寬窄標記：對得上就好，不搶走標題的注意力。
+                */}
                 <span
                   className={cn(
-                    'shrink-0 rounded px-1.5 py-0.5 text-xs',
-                    source.isUsed ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground',
+                    'mt-0.5 w-6 shrink-0 text-right font-mono text-[10px] leading-5 tabular-nums',
+                    source.isUsed ? 'text-foreground' : 'text-muted-foreground/60',
                   )}
+                  title={source.isUsed ? '已被引用' : '未被引用'}
                 >
                   {source.sourceId}
                 </span>
