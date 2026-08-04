@@ -387,6 +387,75 @@ const run = async () => {
   check('1.0.0 的舊檔案仍然匯得進來（新欄位全選填）',
     (await upload('/imports', 'legacy.json', importFile([validQuestion(206)]), csrf)).body?.status === 'validated');
 
+  // 匯入目標與丟棄。
+  //
+  // 這兩件事後端契約一直都支援（commit 可帶 targetSubjectId / targetChapterId、
+  // DELETE /imports/:id），但前端從來沒有接上——commit 一律送空物件。
+  console.log('\n=== 匯入：指定目標科目與章節 ===');
+
+  const destSubject = (await call('POST', '/subjects', { name: `指定科目-${stamp}` }, H())).body;
+  const destChapter = (await call('POST', '/chapters',
+    { subjectId: destSubject.id, name: `指定章節-${stamp}` }, H())).body;
+  const otherSubject = (await call('POST', '/subjects', { name: `另一科目-${stamp}` }, H())).body;
+  const otherChapter = (await call('POST', '/chapters',
+    { subjectId: otherSubject.id, name: `另一章節-${stamp}` }, H())).body;
+  check('建立兩組科目與章節', Boolean(destChapter?.id && otherChapter?.id));
+
+  const targeted = await upload('/imports', 'targeted.json',
+    importFile([validQuestion(301), validQuestion(302)]), csrf);
+  check('待指定目標的批次已驗證', targeted.body?.status === 'validated',
+    `status=${targeted.body?.status}`);
+
+  // 章節屬於另一個科目 → 必須擋下，而且是可讀的 409 而不是外鍵爆掉的 500。
+  const mismatch = await call('POST', `/imports/${targeted.body.id}/commit`, {
+    targetSubjectId: destSubject.id,
+    targetChapterId: otherChapter.id,
+  }, H());
+  check('**章節不屬於指定科目 → 409 CHAPTER_SUBJECT_MISMATCH**',
+    mismatch.status === 409 && mismatch.body?.error?.code === 'CHAPTER_SUBJECT_MISMATCH',
+    `status=${mismatch.status} code=${mismatch.body?.error?.code}`);
+
+  const stillPending = await call('GET', `/imports/${targeted.body.id}`);
+  check('被擋下之後批次仍可再次 commit', stillPending.body?.status !== 'committed',
+    `status=${stillPending.body?.status}`);
+
+  const targetedCommit = await call('POST', `/imports/${targeted.body.id}/commit`, {
+    targetSubjectId: destSubject.id,
+    targetChapterId: destChapter.id,
+  }, H());
+  check('指定科目與章節後 commit 成功', targetedCommit.status === 200,
+    JSON.stringify(targetedCommit.body));
+  check('回報的目標科目正確', targetedCommit.body?.subjectId === destSubject.id,
+    `${targetedCommit.body?.subjectId} vs ${destSubject.id}`);
+  check('**題目真的落在指定的章節**', targetedCommit.body?.chapterId === destChapter.id,
+    `${targetedCommit.body?.chapterId} vs ${destChapter.id}`);
+
+  const inChapter = await call('GET', `/questions?chapterId=${destChapter.id}&pageSize=50`);
+  check('依章節查得到剛匯入的題目', inChapter.body?.pagination?.total === 2,
+    `total=${inChapter.body?.pagination?.total}`);
+
+  console.log('\n=== 匯入：丟棄不匯入 ===');
+  const beforeDiscard = (await call('GET', '/questions?pageSize=1')).body.pagination.total;
+  const toDiscard = await upload('/imports', 'discard-me.json',
+    importFile([validQuestion(401), validQuestion(402)]), csrf);
+  check('待丟棄的批次已建立', toDiscard.status === 201);
+
+  const discarded = await call('DELETE', `/imports/${toDiscard.body.id}`, undefined, H());
+  check('可以丟棄批次', discarded.status === 200 || discarded.status === 204,
+    `status=${discarded.status}`);
+
+  const afterDiscard = await call('GET', `/imports/${toDiscard.body.id}`);
+  check('丟棄後狀態為 discarded', afterDiscard.body?.status === 'discarded',
+    `status=${afterDiscard.body?.status}`);
+  const totalNow = (await call('GET', '/questions?pageSize=1')).body.pagination.total;
+  check('**丟棄不會動到正式題庫**', totalNow === beforeDiscard,
+    `${beforeDiscard} → ${totalNow}`);
+
+  const commitDiscarded = await call('POST', `/imports/${toDiscard.body.id}/commit`, {}, H());
+  check('丟棄後不可再 commit', commitDiscarded.status >= 400,
+    `status=${commitDiscarded.status}`);
+
+
   console.log(`\n===== 通過 ${pass} 項，失敗 ${fail} 項 =====`);
   process.exit(fail === 0 ? 0 : 1);
 };

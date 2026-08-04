@@ -36,6 +36,11 @@ function ImportsView() {
     queryFn: () => api.get<{ prompt: string }>('/imports/prompt'),
   });
 
+  const discard = useMutation({
+    mutationFn: (id: string) => api.delete(`/imports/${id}`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['imports'] }),
+  });
+
   const upload = useMutation({
     mutationFn: async (file: File) => {
       // 上傳走 multipart，不經過 api-client 的 JSON 路徑，但 CSRF token
@@ -132,20 +137,37 @@ function ImportsView() {
         <h2 className="font-medium">匯入紀錄</h2>
         {batches.data?.length === 0 && <EmptyState title="還沒有任何匯入紀錄" />}
         {batches.data?.map((batch) => (
-          <Link key={batch.id} href={`/imports/${batch.id}`} className="block">
-            <Card className="flex items-center gap-4 transition hover:bg-accent/40">
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-medium">{batch.filename}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {batch.totalCount} 題 · 錯誤 {batch.errorCount} · 警告 {batch.warningCount}
-                  {batch.reviewRequiredCount > 0 && ` · 需複核 ${batch.reviewRequiredCount}`}
-                  {' · '}
-                  {new Date(batch.createdAt).toLocaleString('zh-TW')}
-                </p>
-              </div>
-              <StatusBadge status={batch.status} />
-            </Card>
-          </Link>
+          <Card key={batch.id} className="flex items-center gap-4">
+            {/*
+              整張卡片原本是一個 Link，丟棄按鈕不能放在裡面——
+              巢狀在連結內的按鈕點下去會連帶觸發導覽。改成只有內容區是連結。
+            */}
+            <Link href={`/imports/${batch.id}`} className="min-w-0 flex-1">
+              <p className="truncate font-medium hover:underline">{batch.filename}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {batch.totalCount} 題 · 錯誤 {batch.errorCount} · 警告 {batch.warningCount}
+                {batch.reviewRequiredCount > 0 && ` · 需複核 ${batch.reviewRequiredCount}`}
+                {batch.noteCount > 0 && ` · 筆記 ${batch.noteCount} 段`}
+                {' · '}
+                {new Date(batch.createdAt).toLocaleString('zh-TW')}
+              </p>
+            </Link>
+            <StatusBadge status={batch.status} />
+            {/* 已匯入的批次不提供丟棄：那會讓人以為連正式題庫的題目也一起沒了。 */}
+            {batch.status !== 'committed' && batch.status !== 'discarded' && (
+              <Button
+                variant="secondary"
+                disabled={discard.isPending}
+                onClick={() => {
+                  if (confirm(`確定丟棄「${batch.filename}」？正式題庫不受影響。`)) {
+                    discard.mutate(batch.id);
+                  }
+                }}
+              >
+                丟棄
+              </Button>
+            )}
+          </Card>
         ))}
       </div>
     </div>

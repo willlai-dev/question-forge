@@ -818,7 +818,47 @@ export class ImportsService {
     const subjectId =
       dto.targetSubjectId ?? (await this.findOrCreateSubject(tx, userId, subjectName));
 
+    // 指定的科目必須是自己的，否則等於可以把題目匯進別人的科目。
+    if (dto.targetSubjectId) {
+      const owned = await tx
+        .select({ id: schema.subjects.id })
+        .from(schema.subjects)
+        .where(and(eq(schema.subjects.id, subjectId), eq(schema.subjects.userId, userId)))
+        .limit(1);
+      if (owned.length === 0) {
+        throw new AppException(ERROR_CODES.NOT_FOUND, '找不到指定的目標科目。');
+      }
+    }
+
     let chapterId = dto.targetChapterId ?? null;
+
+    /*
+     * 指定的章節必須屬於指定的科目。
+     *
+     * 不擋的話只會撞到 question_groups 的複合外鍵，
+     * 使用者拿到的是一個看不懂的 500，而不是「這個章節不屬於這個科目」。
+     */
+    if (chapterId) {
+      const rows = await tx
+        .select({ id: schema.chapters.id })
+        .from(schema.chapters)
+        .innerJoin(schema.subjects, eq(schema.subjects.id, schema.chapters.subjectId))
+        .where(
+          and(
+            eq(schema.chapters.id, chapterId),
+            eq(schema.chapters.subjectId, subjectId),
+            eq(schema.subjects.userId, userId),
+          ),
+        )
+        .limit(1);
+      if (rows.length === 0) {
+        throw new AppException(
+          ERROR_CODES.CHAPTER_SUBJECT_MISMATCH,
+          '指定的章節不屬於指定的科目。',
+        );
+      }
+    }
+
     if (!chapterId && chapterName) {
       chapterId = await this.findOrCreateChapter(tx, subjectId, chapterName);
     }

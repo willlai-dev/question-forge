@@ -1,6 +1,11 @@
 'use client';
 
-import type { ImportBatchResponse, ImportQuestionResponse } from '@repo/contracts';
+import type {
+  ChapterResponse,
+  ImportBatchResponse,
+  ImportQuestionResponse,
+  SubjectResponse,
+} from '@repo/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { use, useState } from 'react';
@@ -19,10 +24,18 @@ export default function ImportPreviewPage({ params }: { params: Promise<{ id: st
   );
 }
 
+/** 與 quiz/new 相同的下拉樣式，避免兩處各長一個樣子。 */
+const selectClass =
+  'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
 function PreviewView({ batchId }: { batchId: string }) {
   const router = useRouter();
   const qc = useQueryClient();
   const [filter, setFilter] = useState<string>('');
+
+  // 空字串代表「照檔案內容建立」，那是原本唯一的行為，因此也是預設值。
+  const [targetSubjectId, setTargetSubjectId] = useState('');
+  const [targetChapterId, setTargetChapterId] = useState('');
 
   const batch = useQuery({
     queryKey: ['imports', batchId],
@@ -37,6 +50,17 @@ function PreviewView({ batchId }: { batchId: string }) {
       ),
   });
 
+  const subjects = useQuery({
+    queryKey: ['subjects'],
+    queryFn: () => api.get<SubjectResponse[]>('/subjects'),
+  });
+
+  const chapters = useQuery({
+    queryKey: ['subjects', targetSubjectId, 'chapters'],
+    queryFn: () => api.get<ChapterResponse[]>(`/subjects/${targetSubjectId}/chapters`),
+    enabled: targetSubjectId !== '',
+  });
+
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['imports', batchId] });
   };
@@ -48,7 +72,12 @@ function PreviewView({ batchId }: { batchId: string }) {
   });
 
   const commit = useMutation({
-    mutationFn: () => api.post<{ committedCount: number }>(`/imports/${batchId}/commit`, {}),
+    mutationFn: () =>
+      api.post<{ committedCount: number }>(`/imports/${batchId}/commit`, {
+        // 只送有選的欄位。沒選就維持原本行為：依檔案內容建立或沿用同名科目／章節。
+        ...(targetSubjectId ? { targetSubjectId } : {}),
+        ...(targetChapterId ? { targetChapterId } : {}),
+      }),
     onSuccess: () => {
       refresh();
       void qc.invalidateQueries({ queryKey: ['questions'] });
@@ -56,7 +85,16 @@ function PreviewView({ batchId }: { batchId: string }) {
     },
   });
 
+  const discard = useMutation({
+    mutationFn: () => api.delete(`/imports/${batchId}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['imports'] });
+      router.push('/imports');
+    },
+  });
+
   const commitError = commit.error instanceof ApiRequestError ? commit.error : null;
+  const discardError = discard.error instanceof ApiRequestError ? discard.error : null;
   const data = batch.data;
 
   return (
@@ -95,26 +133,86 @@ function PreviewView({ batchId }: { batchId: string }) {
         </Card>
       )}
 
-      {data?.status !== 'committed' && (
-        <Card className="flex flex-wrap items-center gap-3">
-          <span className="text-sm">
-            {data?.canCommit
-              ? '沒有阻斷性錯誤，可以寫入正式題庫。'
-              : '仍有題目存在錯誤，請先修正或排除。'}
-          </span>
-          <Button
-            className="ml-auto"
-            disabled={!data?.canCommit || commit.isPending}
-            onClick={() => {
-              if (confirm(`確定將 ${data?.validCount} 題寫入正式題庫？`)) commit.mutate();
-            }}
-          >
-            {commit.isPending ? '匯入中…' : '確認匯入'}
-          </Button>
+      {data?.status !== 'committed' && data?.status !== 'discarded' && (
+        <Card className="space-y-4">
+          <div>
+            <h2 className="font-medium">匯入目標</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              不選就照檔案內容處理：同名科目沿用、沒有就建立。選了科目與章節則寫入指定位置。
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="科目" hint="不選則依檔案的科目名稱">
+              <select
+                className={selectClass}
+                value={targetSubjectId}
+                onChange={(e) => {
+                  setTargetSubjectId(e.target.value);
+                  // 章節屬於科目，換科目就必須清掉，否則會送出跨科目的組合。
+                  setTargetChapterId('');
+                }}
+              >
+                <option value="">依檔案內容（{data?.targetSubjectName ?? '新建立'}）</option>
+                {subjects.data?.map((subject) => (
+                  <option key={subject.id} value={subject.id}>
+                    {subject.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label="章節" hint={targetSubjectId ? '不選則依檔案的章節名稱' : '請先選擇科目'}>
+              <select
+                className={selectClass}
+                value={targetChapterId}
+                disabled={!targetSubjectId}
+                onChange={(e) => setTargetChapterId(e.target.value)}
+              >
+                <option value="">依檔案內容</option>
+                {chapters.data?.map((chapter) => (
+                  <option key={chapter.id} value={chapter.id}>
+                    {chapter.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 border-t pt-4">
+            <span className="text-sm">
+              {data?.canCommit
+                ? '沒有阻斷性錯誤，可以寫入正式題庫。'
+                : '仍有題目存在錯誤，請先修正或排除。'}
+            </span>
+            <div className="ml-auto flex gap-2">
+              {/* 不想匯入就要能整批丟掉，否則待確認的批次會一直堆在清單上。 */}
+              <Button
+                variant="secondary"
+                disabled={discard.isPending}
+                onClick={() => {
+                  if (confirm('確定丟棄這個批次？暫存的題目會一併刪除，正式題庫不受影響。')) {
+                    discard.mutate();
+                  }
+                }}
+              >
+                {discard.isPending ? '丟棄中…' : '丟棄不匯入'}
+              </Button>
+              <Button
+                disabled={!data?.canCommit || commit.isPending}
+                onClick={() => {
+                  if (confirm(`確定將 ${data?.validCount} 題寫入正式題庫？`)) commit.mutate();
+                }}
+              >
+                {commit.isPending ? '匯入中…' : '確認匯入'}
+              </Button>
+            </div>
+          </div>
         </Card>
       )}
 
       {commitError && <ErrorBanner message={commitError.message} details={commitError.details} />}
+      {discardError && <ErrorBanner message={discardError.message} details={discardError.details} />}
 
       <div className="flex flex-wrap gap-2">
         {[
