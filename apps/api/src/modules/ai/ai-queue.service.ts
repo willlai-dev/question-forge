@@ -155,10 +155,17 @@ export class AiQueueService implements OnModuleInit, OnApplicationShutdown {
     try {
       // 分派靠 payload 的 kind：BullMQ 的 job name 目前沒被檢查，
       // 而且舊任務可能還躺在佇列裡，用資料本身判定比較穩。
-      const result =
+      //
+      // 整個任務再套一層總時限：單次請求的逾時只保護「一次呼叫」，
+      // 但一個任務有三個階段、每階段還可能重試，加起來仍可能長到不合理。
+      // 這一層保證任務一定會結束，不會永遠停在 active 讓使用者一直等。
+      // BULLMQ_JOB_TIMEOUT_MS 原本宣告了卻沒有人用，這裡才真正接上。
+      const result = await withDeadline(
         isAggregate(input)
-          ? await this.aggregate.run(input, report)
-          : await this.analysis.run(input, report);
+          ? this.aggregate.run(input, report)
+          : this.analysis.run(input, report),
+        this.env.BULLMQ_JOB_TIMEOUT_MS,
+      );
       await this.updateJob(input.aiJobId, {
         status: 'completed',
         progressStep: 'COMPLETED',
@@ -202,4 +209,37 @@ function describe(error: unknown): string {
 /** 舊的單題任務沒有 kind 欄位，因此以「有沒有 kind」判定，而不是反過來。 */
 function isAggregate(input: AiJobPayload): input is AggregateJobInput {
   return (input as AggregateJobInput).kind === 'aggregate_analysis';
+}
+
+/**
+ * 給一段非同步工作套上總時限。
+ *
+ * 超時會讓任務以明確的錯誤結束，而不是永遠停在 active——
+ * 使用者看得到「失敗了、可以重跑」，而不是一個不會動的進度條。
+ *
+ * 注意：這只保證「任務會被標記結束」，底層那次呼叫仍可能還在跑完才罷休。
+ * 真正的取消要靠 provider 自己的 AbortController（見 NvidiaAiProvider）。
+ * 這一層是最後一道防線，不是第一道。
+ */
+export async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new AppException(
+                ERROR_CODES.AI_PROVIDER_UNAVAILABLE,
+                `分析超過 ${Math.round(ms / 1000)} 秒仍未完成，已中止。可以按重跑再試一次。`,
+              ),
+            ),
+          ms,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }

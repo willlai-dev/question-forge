@@ -104,12 +104,35 @@ export function AiAnalysisPanel({
     }
   }, [job.data?.status, qc, questionId]);
 
+  const cancel = useMutation({
+    mutationFn: (id: string) => api.post<AiJobResponse>(`/ai/jobs/${id}/cancel`, {}),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['ai-job', jobId] }),
+  });
+
   const startError = start.error instanceof ApiRequestError ? start.error : null;
   const running =
     job.data !== undefined &&
     job.data.status !== 'completed' &&
     job.data.status !== 'failed' &&
     job.data.status !== 'cancelled';
+
+  /**
+   * 已經跑了多久。
+   *
+   * 進度條只有階段與百分比，一個慢的任務跟一個卡住的任務看起來一模一樣。
+   * 把經過秒數顯示出來，使用者才判斷得出「還在跑」與「該取消了」。
+   */
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const startedAt = job.data?.startedAt;
+    if (!startedAt || !running) return;
+    const tick = () =>
+      setElapsed(Math.max(0, Math.round((Date.now() - new Date(startedAt).getTime()) / 1000)));
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [job.data?.startedAt, running]);
+
 
   const data = analysis.data;
 
@@ -134,12 +157,22 @@ export function AiAnalysisPanel({
               強制重新分析
             </Button>
           )}
+          {/* 跑太久時要有辦法停手，否則只能盯著一個不會動的進度條。 */}
+          {running && jobId && (
+            <Button
+              variant="secondary"
+              onClick={() => cancel.mutate(jobId)}
+              disabled={cancel.isPending}
+            >
+              {cancel.isPending ? '取消中…' : '取消'}
+            </Button>
+          )}
         </div>
       </div>
 
       {startError && <ErrorBanner message={startError.message} details={startError.details} />}
 
-      {job.data && running && <ProgressBar job={job.data} />}
+      {job.data && running && <ProgressBar job={job.data} elapsedSeconds={elapsed} />}
 
       {job.data?.status === 'failed' && (
         <ErrorBanner
@@ -163,13 +196,20 @@ export function AiAnalysisPanel({
   );
 }
 
-function ProgressBar({ job }: { job: AiJobResponse }) {
+/** 超過這個秒數就提醒使用者「比平常久」。實測正常單階段約 7～23 秒。 */
+const SLOW_ANALYSIS_SECONDS = 90;
+
+function ProgressBar({ job, elapsedSeconds }: { job: AiJobResponse; elapsedSeconds: number }) {
   const step = AI_PROGRESS_STEPS[job.progressStep];
+  const slow = elapsedSeconds >= SLOW_ANALYSIS_SECONDS;
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-sm">
         <span>{step.label}</span>
-        <span className="tabular-nums text-muted-foreground">{job.progressPct}%</span>
+        <span className="tabular-nums text-muted-foreground">
+          {elapsedSeconds > 0 && `${elapsedSeconds} 秒．`}
+          {job.progressPct}%
+        </span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-muted">
         <div
@@ -177,6 +217,12 @@ function ProgressBar({ job }: { job: AiJobResponse }) {
           style={{ width: `${job.progressPct}%` }}
         />
       </div>
+      {slow && (
+        <p className="text-xs text-muted-foreground">
+          比平常久（通常 30 秒內）。模型可能正在排隊，可以先去做下一題，稍後回來看；
+          或直接取消再重跑。
+        </p>
+      )}
     </div>
   );
 }

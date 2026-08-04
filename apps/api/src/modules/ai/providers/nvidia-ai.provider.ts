@@ -53,7 +53,19 @@ export class NvidiaAiProvider implements AiProvider {
       },
     };
 
+    /**
+     * 逾時必須涵蓋「讀完回應主體」，不能只保護 fetch 本身。
+     *
+     * fetch 在**收到標頭**時就 resolve，主體是之後才串流下來的。原本的寫法在
+     * finally 裡就 clearTimeout，於是 `response.text()` 完全沒有逾時保護，
+     * 也沒有任何東西會去 abort 它——伺服器只要送出標頭後停住，這裡就永遠掛著。
+     *
+     * 實際遇到的就是這個：任務卡在 SYNTHESIZING_EVIDENCE 超過 10 分鐘，
+     * 用量紀錄一片空白（紀錄是在呼叫結束後才寫的），而設定的逾時是 180 秒。
+     * 因此 clearTimeout 一路延後到主體讀完為止。
+     */
     let response: Response;
+    let text: string;
     try {
       response = await fetch(`${this.env.NVIDIA_API_BASE_URL}/chat/completions`, {
         method: 'POST',
@@ -64,8 +76,10 @@ export class NvidiaAiProvider implements AiProvider {
         body: JSON.stringify(body),
         signal: controller.signal,
       });
+      // 同一個 signal 也會中斷這裡的串流讀取。
+      text = await response.text();
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
+      if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
         throw new AiProviderError(
           `NVIDIA 請求超過 ${this.env.NVIDIA_REQUEST_TIMEOUT_MS}ms 逾時。`,
           'timeout',
@@ -75,8 +89,6 @@ export class NvidiaAiProvider implements AiProvider {
     } finally {
       clearTimeout(timeout);
     }
-
-    const text = await response.text();
 
     if (!response.ok) {
       // 錯誤訊息可能含有請求內容，不直接外傳；只記錄摘要。
