@@ -37,6 +37,33 @@ export function AiAnalysisPanel({
   const qc = useQueryClient();
   const [jobId, setJobId] = useState<string | null>(null);
 
+  /**
+   * 找出這一題目前是否已經有在跑的分析任務。
+   *
+   * 為什麼需要這個：分析是非同步的，使用者本來就會按下去之後先去做下一題，
+   * 等一下再回來看。但「哪個任務正在跑」原本只存在元件的 local state 裡，
+   * 一離開就沒了——回來時面板會以為什麼都沒發生，只顯示「開始分析」按鈕，
+   * 進度完全看不到。改成從伺服器問，狀態就不再綁在這次的元件生命週期上。
+   */
+  const runningJob = useQuery({
+    queryKey: ['ai-job-for-question', questionId],
+    queryFn: () =>
+      api.get<{ items: AiJobResponse[] }>(`/ai/jobs?questionId=${questionId}&pageSize=1`),
+    // 已經知道 jobId 或已經有結果時就不必再問。
+    enabled: jobId === null,
+    retry: false,
+  });
+
+  // 伺服器說還有任務在跑 → 接手它，進度條就會接續顯示。
+  useEffect(() => {
+    if (jobId !== null) return;
+    const latest = runningJob.data?.items?.[0];
+    if (!latest) return;
+    if (latest.status === 'pending' || latest.status === 'active' || latest.status === 'retrying') {
+      setJobId(latest.id);
+    }
+  }, [runningJob.data, jobId]);
+
   const analysis = useQuery({
     queryKey: ['analysis', questionId, userAnswerId ?? null],
     queryFn: () =>

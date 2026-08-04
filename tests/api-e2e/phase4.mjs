@@ -301,6 +301,33 @@ const run = async () => {
   check('新任務完成', afterEditDone.status === 'completed',
     `status=${afterEditDone.status} ${String(afterEditDone.errorMessage).slice(0, 150)}`);
 
+  // 使用者的實際用法：按下分析之後先去做下一題，等一下再回來看。
+  // 因此「哪個任務在跑」不能只存在前端的元件狀態裡——離開再回來就沒了。
+  console.log('\n=== 分析結果會存著，且離開後回得來 ===');
+
+  const foundByQuestion = await call('GET', `/ai/jobs?questionId=${q1.id}&pageSize=1`);
+  check('**可用 questionId 找回這一題的分析任務**',
+    foundByQuestion.body?.items?.[0]?.questionId === q1.id,
+    JSON.stringify(foundByQuestion.body?.items?.map((j) => j.questionId)));
+
+  const readA = await call('GET', `/questions/${q1.id}/analysis`);
+  const readB = await call('GET', `/questions/${q1.id}/analysis`);
+  check('解析可重複讀取', readA.status === 200 && readB.status === 200);
+  check('**重複讀取的內容完全相同**',
+    JSON.stringify(readA.body) === JSON.stringify(readB.body));
+
+  const beforeReread = (await call('GET', '/ai/usage')).body.totalCalls;
+  await call('GET', `/questions/${q1.id}/analysis`);
+  const afterReread = (await call('GET', '/ai/usage')).body.totalCalls;
+  check('**重複讀取解析不會再呼叫模型**', afterReread === beforeReread,
+    `${beforeReread} → ${afterReread}`);
+
+  // 另一題不能沿用這一題的解析。
+  const otherAnalysis = await call('GET', `/questions/${q2.id}/analysis`);
+  check('不同題目的解析各自獨立',
+    otherAnalysis.status !== 200 || otherAnalysis.body.questionId === q2.id,
+    `questionId=${otherAnalysis.body?.questionId}`);
+
   console.log('\n=== 任務進度與管理（驗收 #14）===');
   const jobs = await call('GET', '/ai/jobs?pageSize=50');
   check('可列出 AI 任務', jobs.status === 200 && jobs.body.items.length >= 2);

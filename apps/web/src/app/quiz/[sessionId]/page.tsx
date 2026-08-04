@@ -203,7 +203,14 @@ function QuizSessionView() {
             面板本身要按下按鈕才會呼叫模型，不會自動消耗額度。
           */}
           {reveal && (
-            <AiAnalysisPanel questionId={data.questionId} userAnswerId={data.answer?.answerId} />
+            <AiAnalysisPanel
+              // key 一定要帶：這一頁換題只是改 position，元件不會卸載。
+              // 沒有 key 的話 React 會沿用同一個實例，上一題的 jobId 會留在
+              // state 裡，換到下一題後進度條顯示的其實是上一題的任務。
+              key={data.questionId}
+              questionId={data.questionId}
+              userAnswerId={data.answer?.answerId}
+            />
           )}
         </Card>
       )}
