@@ -201,6 +201,7 @@ export class AnalysisReadService {
       byOperation: byOperation.map((row) => ({
         operation: row.operation as AiUsageResponse['byOperation'][number]['operation'],
         calls: row.calls,
+        successCalls: row.successCalls,
         successRate: row.calls === 0 ? null : Math.round((row.successCalls / row.calls) * 10000) / 100,
         avgLatencyMs: row.avgLatencyMs,
         totalTokens: row.totalTokens,

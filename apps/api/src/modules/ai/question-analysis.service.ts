@@ -8,6 +8,7 @@ import {
   finalExplanationSchema,
   normalizeTagName,
   researchPlanSchema,
+  verifyCitationQuotes,
   type AiProgressStep,
   type Env,
   type EvidenceSource,
@@ -202,8 +203,6 @@ export class QuestionAnalysisService {
       requestSchema: finalExplanationSchema,
       responseSchema: buildFinalExplanationSchema({
         allowedSourceIds: new Set(sources.map((s) => s.sourceId)),
-        // 用送出去的那份內容（已截斷）比對引用，而不是原始全文。
-        sourceContents: new Map(sources.map((s) => [s.sourceId, s.content])),
         optionKeys: new Set(question.options.map((o) => o.key)),
         allowedErrorTypeCodes: new Set(vocabulary.errorTypes.map((t) => t.code)),
         fallbackErrorTypeCode: vocabulary.fallbackErrorTypeCode,
@@ -217,7 +216,47 @@ export class QuestionAnalysisService {
       aiJobId: input.aiJobId,
       promptVersion: this.promptSeed.activeVersion('final_explanation'),
     });
-    return data;
+
+    return this.stripUnverifiableQuotes(data, sources);
+  }
+
+  /**
+   * 移除對不上來源正文的引用原文。
+   *
+   * 「AI 不能把來源沒說過的話算在該來源頭上」這個保證，用**移除**達成就夠了，
+   * 不需要讓整份解析陣亡。
+   *
+   * 這是實測換來的教訓：原本它是硬性驗證，在真實網頁上大量誤殺——
+   * Tavily 回傳 markdown，模型忠實引用時會把 `[文字](網址)` 還原成 `文字`，
+   * 逐位元組比對就判它捏造，然後反覆重生到耗盡次數，
+   * 使用者拿到的是「分析失敗」而不是一份少了幾句引文的解析。
+   *
+   * 現在正規化已經涵蓋 markdown 與標點差異，真正對不上的幾乎只剩憑記憶捏造的情況；
+   * 那種情況把 quote 拿掉、保留 sourceId 與關聯性，比整份丟掉合理得多。
+   */
+  private stripUnverifiableQuotes(
+    final: FinalExplanation,
+    sources: EvidenceSource[],
+  ): FinalExplanation {
+    if (final.citations.length === 0) return final;
+
+    const contents = new Map(sources.map((s) => [s.sourceId, s.content]));
+    const unverified = verifyCitationQuotes(final.citations, contents);
+    if (unverified.length === 0) return final;
+
+    const strippedIndexes = new Set(unverified.map((item) => item.index));
+    for (const item of unverified) {
+      this.logger.warn(
+        `引用原文對不上來源 ${item.sourceId}，已移除該段引文：${item.fragment.slice(0, 80)}`,
+      );
+    }
+
+    return {
+      ...final,
+      citations: final.citations.map((citation, index) =>
+        strippedIndexes.has(index) ? { ...citation, quote: null } : citation,
+      ),
+    };
   }
 
   // ------------------------------------------------------------ 保存

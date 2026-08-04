@@ -259,6 +259,14 @@ export const aiUsageResponseSchema = z.object({
     z.object({
       operation: aiOperationSchema,
       calls: z.number().int(),
+      /**
+       * 真正打到模型的次數。
+       *
+       * 與 `calls` 的差額是被本地限流器擋下、還沒送出就記錄的嘗試。
+       * 兩者要分開才問得出「這個操作花了幾次模型呼叫」——
+       * 用 `calls` 會把限流等待也算成一次呼叫。
+       */
+      successCalls: z.number().int(),
       successRate: z.number().nullable(),
       avgLatencyMs: z.number().int().nullable(),
       totalTokens: z.number().int(),

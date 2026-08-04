@@ -497,7 +497,21 @@ const run = async () => {
 
   // ------------------------------------------------------------ 多題整合分析
   console.log('\n=== 多題整合分析（驗收 #19）===');
-  const usageBefore = (await call('GET', '/ai/usage')).body.totalCalls;
+  /*
+   * 只數 aggregate_analysis 這個 operation **真正送出**的呼叫次數。
+   *
+   * 兩個地方都要精確，缺一不可：
+   *
+   *   1. 用全域 totalCalls 會被同時在跑的其他任務污染。
+   *   2. 用 calls 會把「被本地限流器擋下」的嘗試也算進去——那沒有打到模型。
+   *      整套 E2E 一輪約 32 次呼叫、限流是 30 RPM，連續重跑必然會撞到，
+   *      於是這條斷言偶發地量到 2。不是程式壞掉，是量錯了東西。
+   */
+  const aggregateCalls = async () => {
+    const usage = (await call('GET', '/ai/usage')).body;
+    return usage.byOperation.find((o) => o.operation === 'aggregate_analysis')?.successCalls ?? 0;
+  };
+  const usageBefore = await aggregateCalls();
 
   const started = await call('POST', '/ai/aggregate-analyses',
     { scopeType: 'all', force: true }, H());
@@ -510,7 +524,7 @@ const run = async () => {
     `${aggJob.status} ${aggJob.errorCode ?? ''} ${aggJob.errorMessage ?? ''}`);
   check('進度走到 100%', aggJob.progressPct === 100);
 
-  const usageAfter = (await call('GET', '/ai/usage')).body.totalCalls;
+  const usageAfter = await aggregateCalls();
   check('**多題分析只呼叫一次模型**（單題是三次）', usageAfter - usageBefore === 1,
     `增量 ${usageAfter - usageBefore}`);
 

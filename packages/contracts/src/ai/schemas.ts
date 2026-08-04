@@ -4,7 +4,6 @@ import {
   aiOptionKeySchema,
   citationSchema,
   confidenceSchema,
-  refineCitationQuotes,
   refineSourceIds,
   researchModeSchema,
   WEB_RESEARCH_MODES,
@@ -323,13 +322,6 @@ export type FinalExplanation = z.infer<typeof finalExplanationBase>;
 
 export interface FinalExplanationContext {
   allowedSourceIds: ReadonlySet<string>;
-  /**
-   * sourceId → 送進模型的來源正文，用來驗證 quote 確實出自該來源。
-   *
-   * 必須是**實際送出的那份內容**（截斷後），不是原始全文——
-   * 否則會要求模型逐字引用它根本沒看到的段落。
-   */
-  sourceContents: ReadonlyMap<string, string>;
   /** 該題所有選項代號，順序無關。 */
   optionKeys: ReadonlySet<string>;
   /** 目前啟用的錯誤類型 code。 */
@@ -445,8 +437,15 @@ export function buildFinalExplanationSchema(context: FinalExplanationContext) {
       ['citations'],
     );
 
-    // 指向真實來源還不夠，引用的內容也必須真的出自那份來源。
-    refineCitationQuotes(value.citations, context.sourceContents, ctx, ['citations']);
+    /*
+     * 引用原文查核**不在這裡**做。
+     *
+     * 它曾經是硬性驗證，結果在真實網頁上大量誤殺（Tavily 回傳 markdown，
+     * 模型忠實引用時會還原連結語法），把整份合法解析反覆重生到失敗。
+     * 現在改由 QuestionAnalysisService 在取得結果後查核，
+     * 對不上的 quote 直接移除而不是讓整次分析陣亡——
+     * 「不顯示捏造的引用」這個保證一樣成立，但解析活得下來。
+     */
 
     // 沒查資料就不可能有引用。
     if (context.researchMode === 'MODEL_ONLY' && value.citations.length > 0) {

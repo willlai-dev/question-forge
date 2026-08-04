@@ -935,3 +935,80 @@ E2E 一律以 `create-test-db.mjs --drop` 從零建立，因此對「既有資�
 | 全新資料庫 | 43 + 60 + 122 + 76 + 116 + 104 = **521 項全過** |
 | 緊接著再跑一次 | **517 項全過** |
 | `pnpm verify` | exit 0，401 個單元測試 |
+
+---
+
+## 引用查核在真實模型上誤殺（Mock 測不到的那一類問題）
+
+第一次以 `AI_PROVIDER=nvidia` + `SEARCH_PROVIDER=tavily` 實際執行，分析直接失敗：
+
+```
+citations.0.quote: 引用的內容並未出現在來源 S1 中：
+  「shiftinginvestmentoptionsfrommanagedmutualfundstoexchange-tr」
+錯誤碼：AI_PROVIDER_UNAVAILABLE
+```
+
+### 診斷（查真實資料，不是讀程式碼）
+
+從 `web_documents` 撈出當次擷取的正文，逐一比對：
+
+```
+crr.bc.edu「By shifting investment options」出現在第 2798 字元  → 在送出的 4000 字元內
+送出內容去空白後是否含該片段： true    ← 引用是真的
+```
+
+**引用是忠實的，我的查核誤殺了它。**
+
+根因是 Tavily 回傳 **markdown**：
+
+```
+The median expense ratio ... lower than that of [index mutual funds](/us/en/...), historically 0.56%
+```
+
+模型忠實引用時會寫成「...lower than that of index mutual funds, historically 0.56%」——
+還原連結語法。逐位元組比對判它捏造 → 重生 → 再判捏造 → 耗盡次數 → 整份分析失敗。
+**任何長引用碰到真實網頁都會中招。**
+
+### 兩處修正
+
+**① 正規化涵蓋不影響語意的差異**（`quote-verification.ts`）
+
+markdown 連結與圖片語法還原成顯示文字、強調與標題記號移除、彎引號與破折號統一、
+大小寫折疊，最後才去空白。保留的仍然是「這些字、以這個順序、確實出現在該來源」。
+
+**② 對不上的引用改為移除，而不是讓整份解析陣亡**
+
+「AI 不能把來源沒說過的話算在該來源頭上」用**移除**達成就夠了。
+原本是硬性驗證，代價是使用者拿到「分析失敗」而不是一份少了幾句引文的解析——
+後者明顯比較有用，而且保證完全沒有變弱。
+
+查核因此從 Zod superRefine 移到 `QuestionAnalysisService.stripUnverifiableQuotes()`，
+純函式仍留在 contracts 層（可單元測試），副作用留在 service 層（可記錄 log）。
+
+### 教訓
+
+**Mock 測不到這一類問題。** Mock 的來源正文是自己造的乾淨字串，
+不會有 markdown、彎引號或連結語法。整套 E2E 520 項全綠，
+卻擋不住第一次真實執行就失敗。
+
+Mock 驗證的是**流程接得起來**；內容層面的假設只有真實 provider 能證偽。
+
+### 順帶修掉一條偶發失敗的斷言
+
+`多題分析只呼叫一次模型` 每隔一輪就失敗一次（增量 2）。查 `ai_usage_logs` 後發現
+多出來的那一筆是 `rate_limited`——被本地限流器擋下、根本沒送出的嘗試也會留下紀錄。
+整套 E2E 一輪約 32 次呼叫、限流是 30 RPM，連續重跑必然撞到。
+
+修正：`byOperation` 新增 `successCalls`（真正送出的次數），斷言改用它。
+連跑三輪不再失敗。
+
+> 這條一開始被我誤判成「其他任務污染全域計數」，改成只數該 operation 之後仍然失敗，
+> 才回頭去查 usage log 找到真正原因。**偶發失敗要查到根因，不要看它偶爾綠了就算了。**
+
+### 執行結果
+
+| 情境 | 結果 |
+|---|---|
+| 全新資料庫 | 43 + 60 + 122 + 76 + 116 + 104 = **521 項全過** |
+| 連續重跑三輪 | 每輪皆全過（含限流觸發的第 2、3 輪） |
+| `pnpm verify` | exit 0，412 個單元測試 |

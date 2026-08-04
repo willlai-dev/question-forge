@@ -59,7 +59,6 @@ export const TRUST_TIER_RANK: Record<TrustTier, number> = {
   other: 4,
 };
 
-/** 程式指派給模型的證據來源。模型只能引用這裡的 sourceId。 */
 /**
  * 一次分析中送進模型的單一來源。
  *
@@ -121,59 +120,3 @@ export function refineSourceIds(
   }
 }
 
-/** 引用中允許的省略記號。用它串接同一份文件的不連續片段是正當的引用寫法。 */
-const ELLIPSIS = /\.{3,}|[…⋯]+/;
-
-/**
- * 比對前的正規化：只去掉空白。
- *
- * 不做標點或全半形轉換——那會讓「逐字」失去意義，
- * 而寬鬆的比對正是這個檢查要防的東西。
- */
-function normalizeForQuoteMatch(text: string): string {
-  return text.replace(/\s+/g, '');
-}
-
-/**
- * 檢查引用的原文是否真的出現在該來源中。
- *
- * `refineSourceIds` 只驗證 sourceId **存在**，擋不住「指向一份真實的官方文件，
- * 然後編造它說過的話」。這是實際發生過的事：某次解析對一份財政部 PDF 捏造了
- * 一段逐字引用，內容裡的稅率換算還是錯的，而所有既有驗證全數通過。
- *
- * 失敗時的訊息會明白告知 quote 可以填 null——模型有這條合法退路，
- * 重生才不會必然耗盡次數而讓整次分析失敗。
- */
-export function refineCitationQuotes(
-  citations: readonly { sourceId: string; quote: string | null }[],
-  contents: ReadonlyMap<string, string>,
-  ctx: z.RefinementCtx,
-  path: (string | number)[],
-): void {
-  citations.forEach((citation, index) => {
-    if (citation.quote === null) return;
-
-    const content = contents.get(citation.sourceId);
-    // sourceId 本身不合法時由 refineSourceIds 回報，這裡不重複噪音。
-    if (content === undefined) return;
-
-    const haystack = normalizeForQuoteMatch(content);
-    const fragments = citation.quote
-      .split(ELLIPSIS)
-      .map(normalizeForQuoteMatch)
-      .filter((fragment) => fragment.length > 0);
-    if (fragments.length === 0) return;
-
-    const missing = fragments.find((fragment) => !haystack.includes(fragment));
-    if (missing === undefined) return;
-
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: [...path, index, 'quote'],
-      message:
-        `引用的內容並未出現在來源 ${citation.sourceId} 中：「${missing.slice(0, 60)}」。` +
-        'quote 必須逐字取自該來源正文（可用「…」串接不連續片段）；' +
-        '無法逐字引用時請把 quote 填 null，不要改寫或自行補述。',
-    });
-  });
-}
