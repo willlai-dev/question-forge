@@ -5,6 +5,7 @@ import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { EnvValidationError } from '@repo/contracts';
+import { assertMigrationsUpToDate, createDatabase, PendingMigrationsError } from '@repo/db';
 import cookieParser from 'cookie-parser';
 import { cleanupOpenApiDoc } from 'nestjs-zod';
 
@@ -17,6 +18,23 @@ async function bootstrap(): Promise<void> {
 
   // 先驗證環境變數再建立應用程式：設定有問題就不要讓服務半殘地起來。
   const env = loadEnv();
+
+  /*
+   * 同樣的理由，資料庫結構落後也要在啟動前擋下。
+   *
+   * 少了這一層，缺表的服務會照常起來，直到使用者剛好走到用得上那張表的功能，
+   * 才吐出 `relation "study_notes" does not exist` 的 500——
+   * 對使用者毫無意義，而問題其實在啟動之前就已經確定存在了。
+   *
+   * 這個檢查用獨立的短命連線，跑完就關：此時 Nest 的 DI 還沒建立，
+   * 拿不到應用程式的連線池，而且也不該為了一次檢查把池子的生命週期弄複雜。
+   */
+  const probe = createDatabase({ connectionString: env.DATABASE_URL, max: 1 });
+  try {
+    await assertMigrationsUpToDate(probe.pool);
+  } finally {
+    await probe.close();
+  }
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     // 錯誤格式由 AllExceptionsFilter 統一產生。
@@ -75,6 +93,14 @@ bootstrap().catch((error: unknown) => {
     console.error(error.message);
     console.error('\n請執行 `pnpm bootstrap:env` 補齊自動產生的變數，');
     console.error('並確認 .env 內已填入 NVIDIA_API_KEY、TAVILY_API_KEY、DATABASE_URL。\n');
+    process.exit(1);
+  }
+
+  if (error instanceof PendingMigrationsError) {
+    // 訊息只含 migration 檔名，不含連線字串或任何機密。
+    console.error('\n啟動失敗：資料庫結構落後於程式碼。');
+    console.error(error.message);
+    console.error('\n請執行： cd packages/db && pnpm db:migrate\n');
     process.exit(1);
   }
 
