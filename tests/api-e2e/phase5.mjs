@@ -614,6 +614,26 @@ const run = async () => {
   check('**不回傳 prompt 內文**',
     versions.body.every((v) => v.systemPrompt === undefined && v.userTemplate === undefined));
 
+  /*
+   * 每個階段恰好一個啟用版本。
+   *
+   * 這條抓的是一次真實的啟動失敗：seed 原本「先插入新版本（isActive: true）
+   * 再停用舊版本」，但 prompt_versions_active_unique 是
+   * (operation) WHERE is_active = true 的部分唯一索引——插入當下舊版本還啟用著，
+   * 索引立刻擋下，後面那句 UPDATE 根本執行不到，整個應用起不來。
+   *
+   * 這個缺陷藏了很久，因為所有測試資料庫都是全新建立的，沒有舊版本可衝突。
+   * 「全新安裝可以跑」不等於「升級可以跑」——升級路徑要自己測。
+   */
+  const activeByOperation = new Map();
+  for (const v of versions.body.filter((x) => x.isActive)) {
+    activeByOperation.set(v.operation, (activeByOperation.get(v.operation) ?? 0) + 1);
+  }
+  check('**每個階段恰好一個啟用版本**',
+    ['research_plan', 'evidence_synthesis', 'final_explanation', 'aggregate_analysis']
+      .every((op) => activeByOperation.get(op) === 1),
+    JSON.stringify([...activeByOperation.entries()]));
+
   // ------------------------------------------------------------ 維護
   console.log('\n=== 維護作業 ===');
   const preview = await call('GET', '/maintenance/preview');
