@@ -8,7 +8,7 @@ import {
 import { AI_PROGRESS_STEPS, ERROR_CODES, type AiProgressStep, type Env } from '@repo/contracts';
 import { schema, type DatabaseHandle } from '@repo/db';
 import { Queue, Worker, type Job } from 'bullmq';
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray, lt } from 'drizzle-orm';
 import type Redis from 'ioredis';
 
 import { AppException } from '../../common/app.exception';
@@ -55,6 +55,9 @@ export class AiQueueService implements OnModuleInit, OnApplicationShutdown {
   ) {}
 
   onModuleInit(): void {
+    // 這個時間點必須早於 worker 開始消費，才能區分「上個行程的孤兒」與「本行程剛接手的」。
+    const startedAt = new Date();
+
     // 用 duplicate() 而非共用連線：BullMQ 的阻塞式指令會獨佔連線，
     // 與其他 Redis 操作共用會互相卡住。
     const connection = this.redis.duplicate();
@@ -82,11 +85,81 @@ export class AiQueueService implements OnModuleInit, OnApplicationShutdown {
       },
     );
 
+    // 佇列說失敗了，資料庫也要跟著標記。
+    //
+    // process() 的 catch 只在「工作真的拋錯」時會跑到。worker 行程被殺掉時
+    // （nest watch 重新編譯、Ctrl+C、當掉）那段程式碼根本不會執行，
+    // 但 BullMQ 會另外把任務判定為 stalled 並標成 failed——
+    // 於是佇列說 failed、資料庫還停在 pending 或 active，兩邊永遠對不起來。
+    // 使用者看到的就是一個永遠不會結束、也永遠不報錯的分析。
     this.worker.on('failed', (job, error) => {
       this.logger.error(`任務 ${job?.id ?? '?'} 失敗：${error.message}`);
+      const aiJobId = (job?.data as AiJobPayload | undefined)?.aiJobId;
+      if (!aiJobId) return;
+      void this.markFailedIfUnfinished(aiJobId, error.message);
     });
 
+    // 用 worker 建立之前的時間點當界線，避免把「這個行程剛接手的任務」也一起判死。
+    void this.reconcileOrphanedJobs(startedAt);
+
     this.logger.log(`AI 佇列已啟動（worker 併發 ${this.env.NVIDIA_MAX_CONCURRENT}）`);
+  }
+
+  /**
+   * 啟動時把上一個行程留下的未完成任務標記為失敗。
+   *
+   * worker 與 API 同一個行程，因此啟動當下不可能有任務「正在執行」——
+   * 資料庫裡還停在 pending / active 的，一定是上次行程結束時被中斷的孤兒。
+   * 不清掉的話，那些任務會永遠停在進度條上，使用者只能一直等。
+   */
+  private async reconcileOrphanedJobs(before: Date): Promise<void> {
+    try {
+      const orphans = await this.database.db
+        .update(schema.aiJobs)
+        .set({
+          status: 'failed',
+          errorCode: ERROR_CODES.AI_PROVIDER_UNAVAILABLE,
+          errorMessage: '後端在分析進行中重新啟動，這個任務已中斷。可以按重跑再試一次。',
+          finishedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            inArray(schema.aiJobs.status, ['pending', 'active', 'retrying']),
+            lt(schema.aiJobs.updatedAt, before),
+          ),
+        )
+        .returning({ id: schema.aiJobs.id });
+
+      if (orphans.length > 0) {
+        this.logger.warn(`已將 ${orphans.length} 筆上次中斷的 AI 任務標記為失敗`);
+      }
+    } catch (error) {
+      this.logger.error(`清理中斷任務失敗：${describe(error)}`);
+    }
+  }
+
+  /** 只在任務還沒有結束狀態時才標記失敗，避免覆蓋掉已完成的結果。 */
+  private async markFailedIfUnfinished(aiJobId: string, message: string): Promise<void> {
+    try {
+      await this.database.db
+        .update(schema.aiJobs)
+        .set({
+          status: 'failed',
+          errorCode: ERROR_CODES.AI_PROVIDER_UNAVAILABLE,
+          errorMessage: message.slice(0, 1000),
+          finishedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.aiJobs.id, aiJobId),
+            inArray(schema.aiJobs.status, ['pending', 'active', 'retrying']),
+          ),
+        );
+    } catch (error) {
+      this.logger.error(`同步任務失敗狀態時出錯：${describe(error)}`);
+    }
   }
 
   async onApplicationShutdown(): Promise<void> {
