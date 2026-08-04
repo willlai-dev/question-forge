@@ -476,6 +476,14 @@ const run = async () => {
     check('有筆記時 researchMode 不是 MODEL_ONLY（否則引用不到筆記）',
       noteAnalysis.body?.researchMode !== 'MODEL_ONLY', noteAnalysis.body?.researchMode);
 
+    // 介面要能滑過引用把整段筆記讀完，因此筆記的 contentSnippet 不截斷。
+    check('**筆記來源保留完整正文（供介面浮動預覽閱讀）**',
+      noteSources[0]?.contentSnippet?.includes('拆除命令屬於行政處分'),
+      `len=${noteSources[0]?.contentSnippet?.length}`);
+    check('來源回傳原文長度，介面才說得出這是不是節錄',
+      typeof noteSources[0]?.contentLength === 'number',
+      String(noteSources[0]?.contentLength));
+
     // 筆記改了 → 快取必須失效。題目本身沒變，content_hash 不會動，
     // 少了筆記指紋這一層，使用者改了筆記卻看不到任何差別。
     const beforeNoteChange = (await call('GET', '/ai/usage')).body.totalCalls;

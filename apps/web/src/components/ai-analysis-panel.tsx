@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
+import { HoverPanel } from '@/components/hover-panel';
 import { Button, Card, ErrorBanner } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
@@ -329,19 +330,21 @@ function AnalysisContent({ data }: { data: QuestionAnalysisResponse }) {
             {data.sources.map((source) => (
               <div key={source.sourceId} className="flex items-start gap-2 text-sm">
                 {/*
-                  來源編號是給「對照引用」用的，不是重點資訊。
-                  原本是填色的膠囊標籤，視覺份量比它旁邊的標題還重。
-                  改成等寬窄標記：對得上就好，不搶走標題的注意力。
+                  來源編號是給「對照引用」用的，不是重點資訊，因此只用等寬窄標記。
+                  同時它也是查看原文的入口：滑上去就能讀到這份來源實際送進模型的內容，
+                  不必離開解析頁去翻筆記或開網頁。
                 */}
-                <span
-                  className={cn(
-                    'mt-0.5 w-6 shrink-0 text-right font-mono text-[10px] leading-5 tabular-nums',
+                <HoverPanel
+                  label={`查看 ${source.sourceId} 的原文`}
+                  panelClassName="w-[min(30rem,calc(100vw-3rem))]"
+                  triggerClassName={cn(
+                    'mt-0.5 w-6 shrink-0 cursor-help text-right font-mono text-[10px] leading-5 tabular-nums underline decoration-dotted underline-offset-2',
                     source.isUsed ? 'text-foreground' : 'text-muted-foreground/60',
                   )}
-                  title={source.isUsed ? '已被引用' : '未被引用'}
+                  panel={<SourceContent source={source} />}
                 >
                   {source.sourceId}
-                </span>
+                </HoverPanel>
                 <div className="min-w-0 flex-1">
                   {/*
                     筆記沒有 URL，不能渲染成連結。
@@ -390,6 +393,54 @@ function AnalysisContent({ data }: { data: QuestionAnalysisResponse }) {
         研究模式 {data.researchMode}．信心 {Math.round(data.confidence * 100)}%．模型 {data.model}
         {data.requiresHumanReview && '．⚠ 建議人工複核'}
       </p>
+    </div>
+  );
+}
+
+/**
+ * 來源原文的浮動預覽。
+ *
+ * 顯示的是**實際送進模型的那份內容**（`contentSnippet`），不是原始全文——
+ * 使用者看到的必須與 AI 看到的一致，否則「這句話 AI 是從哪裡讀到的」對不起來。
+ * 因此內容比原文短時要明說，不能讓人以為這就是整段筆記。
+ */
+function SourceContent({
+  source,
+}: {
+  source: QuestionAnalysisResponse['sources'][number];
+}) {
+  const snippet = source.contentSnippet.trim();
+  const truncated = source.contentLength !== null && source.contentLength > snippet.length;
+
+  return (
+    <div className="space-y-2 text-left">
+      <div>
+        <p className="text-sm font-medium leading-snug">{source.title}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {source.sourceType === 'note' ? (
+            <span className="text-emerald-700 dark:text-emerald-400">你的章節筆記</span>
+          ) : (
+            source.domain
+          )}
+          {' · '}
+          {source.isUsed ? '已被引用' : '未被引用'}
+        </p>
+      </div>
+
+      {snippet === '' ? (
+        <p className="text-xs text-muted-foreground">這份來源沒有保存正文。</p>
+      ) : (
+        <div className="max-h-72 overflow-y-auto rounded border bg-muted/30 p-2">
+          <p className="whitespace-pre-wrap text-xs leading-relaxed">{snippet}</p>
+        </div>
+      )}
+
+      {truncated && (
+        <p className="text-[11px] text-muted-foreground">
+          以上是送進模型的前 {snippet.length} 字，原文共 {source.contentLength} 字。
+        </p>
+      )}
+      <p className="text-[11px] text-muted-foreground">滑鼠移入可捲動；點編號可釘住不關。</p>
     </div>
   );
 }

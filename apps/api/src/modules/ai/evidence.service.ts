@@ -228,7 +228,16 @@ export class EvidenceService {
         title: source.title,
         publishedDate: source.publishedDate,
         fetchedAt: new Date(source.fetchedAt),
-        contentSnippet: source.content.slice(0, 2000),
+        /*
+         * 網頁只留前 2000 字當摘要；**筆記整段留著**。
+         *
+         * 筆記是使用者自己的教材，介面上要能滑過引用就把整段讀完。
+         * 截在 2000 字會讓長筆記捲到一半就沒了，而它本來就是本地資料，
+         * 沒有「怕存太多」的理由——單題的筆記總量早已被
+         * NOTES_MAX_CHARS_PER_QUESTION 限制住。
+         */
+        contentSnippet:
+          source.sourceType === 'note' ? source.content : source.content.slice(0, 2000),
         contentLength: source.content.length,
         // 筆記不是查來的，記成搜尋 provider 會讓用量分析把它算成一次外部查詢。
         searchProvider: source.sourceType === 'note' ? null : this.search.name,

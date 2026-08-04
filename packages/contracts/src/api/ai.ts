@@ -110,6 +110,13 @@ export const evidenceSourceResponseSchema = z.object({
   fetchedAt: z.string().datetime(),
   trustTier: trustTierSchema,
   contentSnippet: z.string(),
+  /**
+   * 來源正文的完整長度。
+   *
+   * `contentSnippet` 只存前 2000 字，介面要能誠實說出「這是節錄」，
+   * 否則使用者會以為自己看到的就是整段筆記。
+   */
+  contentLength: z.number().int().nullable(),
   searchQuery: z.string().nullable(),
   rank: z.number().int().nullable(),
   score: z.number().nullable(),

@@ -138,6 +138,7 @@ export class AnalysisReadService {
         fetchedAt: source.fetchedAt.toISOString(),
         trustTier: source.trustTier as QuestionAnalysisResponse['sources'][number]['trustTier'],
         contentSnippet: source.contentSnippet ?? '',
+        contentLength: source.contentLength,
         searchQuery: source.searchQuery,
         rank: source.rank,
         score: source.score === null ? null : Number(source.score),
