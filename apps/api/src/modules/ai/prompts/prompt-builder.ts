@@ -7,6 +7,7 @@ import type {
 } from '@repo/contracts';
 
 import {
+  MOCK_ANALYSIS_FAILURE_MARKER,
   MOCK_CONFLICT_MARKER,
   MOCK_CONTEXT_MARKER,
   MOCK_EXCERPT_CHARS,
@@ -192,6 +193,7 @@ export class PromptBuilder {
         fallbackErrorTypeCode: vocabulary.fallbackErrorTypeCode,
         expectConflict: question.stem.includes(MOCK_CONFLICT_MARKER),
         expectFabricatedQuote: question.stem.includes(MOCK_FABRICATED_QUOTE_MARKER),
+        expectFailure: question.stem.includes(MOCK_ANALYSIS_FAILURE_MARKER),
       }),
     ].join('\n');
 

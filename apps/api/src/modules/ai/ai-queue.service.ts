@@ -178,6 +178,30 @@ export class AiQueueService implements OnModuleInit, OnApplicationShutdown {
     }
 
     try {
+      /*
+       * 先清掉同 id 的舊任務，否則這次 add 會被靜默忽略。
+       *
+       * BullMQ 的 `add({ jobId })` 遇到已存在的 id **不會報錯也不會排入**，
+       * 只是回傳既有那一筆。而 removeOnFail 保留失敗任務 24 小時、
+       * removeOnComplete 保留 1 小時——於是任何失敗或取消過的任務，
+       * 在保留期內都再也重跑不了：資料庫顯示 pending，佇列裡卻什麼都沒有，
+       * 進度條永遠停在「排隊中」。
+       *
+       * 走到這裡代表確實要重跑（analyzeQuestion 只在沒有既有任務、
+       * 或既有任務已 failed / cancelled 時才呼叫 enqueue），
+       * 因此清掉舊紀錄是正確的，不會破壞去重。
+       */
+      const freed = await this.discardStaleJob(idempotencyKey);
+      if (!freed) {
+        // 舊任務還在執行中，移不掉。此時 add 會被靜默忽略，
+        // 資料庫卻已經被重設為 pending —— 與其留下一筆永遠不會動的紀錄，
+        // 不如明確告訴使用者「還在跑」。
+        throw new AppException(
+          ERROR_CODES.CONFLICT,
+          '這個分析正在執行中，請等它結束後再重跑。',
+        );
+      }
+
       const job = await this.queue.add('analyze', input, {
         jobId: idempotencyKey,
         priority,
@@ -187,6 +211,10 @@ export class AiQueueService implements OnModuleInit, OnApplicationShutdown {
       });
       return job.id ?? idempotencyKey;
     } catch (error) {
+      // 我們自己丟的錯誤要原樣往外傳。包成「Redis 未連線」會把
+      // 「任務正在執行中」講成一個完全不相干的故障，使用者只會去重啟 Redis。
+      if (error instanceof AppException) throw error;
+
       // Redis 掛掉時 AI 功能不可用，但系統其餘部分照常運作。
       this.logger.error(`無法送出 AI 任務：${describe(error)}`);
       throw new AppException(
@@ -198,12 +226,34 @@ export class AiQueueService implements OnModuleInit, OnApplicationShutdown {
 
   async cancel(idempotencyKey: string): Promise<void> {
     if (!this.queue) return;
+    await this.discardStaleJob(idempotencyKey);
+  }
+
+  /**
+   * 從佇列移除指定 id 的任務，正在執行中的除外。
+   *
+   * **不能用 `job.isWaiting()` 判斷。** 本專案的任務都帶 priority，
+   * BullMQ 會把它們放進 `prioritized` 集合而不是 `wait`，
+   * 此時 `isWaiting()` 是 false——原本的取消因此幾乎從不真的移除任何東西，
+   * 只改了資料庫狀態，佇列裡的殘骸留著擋住後續的重跑。
+   *
+   * 改成直接 `remove()`：BullMQ 對執行中（已上鎖）的任務會丟例外，
+   * 那正是我們要的語意——執行中的無法中途撤掉，由資料庫標記 cancelled 即可。
+   */
+  private async discardStaleJob(jobId: string): Promise<boolean> {
+    if (!this.queue) return true;
     try {
-      const job = await this.queue.getJob(idempotencyKey);
-      // 已在執行中的任務無法中途撤掉，狀態改由資料庫標記為 cancelled。
-      if (job && (await job.isWaiting())) await job.remove();
+      const job = await this.queue.getJob(jobId);
+      if (!job) return true;
+      if (await job.isActive()) {
+        this.logger.log(`任務 ${jobId} 正在執行中，無法從佇列移除`);
+        return false;
+      }
+      await job.remove();
+      return true;
     } catch (error) {
-      this.logger.warn(`取消佇列任務失敗：${describe(error)}`);
+      this.logger.warn(`移除佇列任務失敗：${describe(error)}`);
+      return false;
     }
   }
 

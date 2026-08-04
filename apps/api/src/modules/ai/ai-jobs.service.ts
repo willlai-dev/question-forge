@@ -117,6 +117,11 @@ export class AiJobsService {
           errorCode: null,
           errorMessage: null,
           finishedAt: null,
+          // 重跑就是一筆全新的執行，舊的取消／開始時間必須一起清掉。
+          // 留著會出現「狀態 pending 卻帶著取消時間戳」這種自相矛盾的列，
+          // 事後查問題時完全無法解釋它到底經歷過什麼。
+          cancelledAt: null,
+          startedAt: null,
           updatedAt: new Date(),
         },
       })
@@ -348,6 +353,11 @@ export class AiJobsService {
           errorCode: null,
           errorMessage: null,
           finishedAt: null,
+          // 重跑就是一筆全新的執行，舊的取消／開始時間必須一起清掉。
+          // 留著會出現「狀態 pending 卻帶著取消時間戳」這種自相矛盾的列，
+          // 事後查問題時完全無法解釋它到底經歷過什麼。
+          cancelledAt: null,
+          startedAt: null,
           updatedAt: new Date(),
         },
       })

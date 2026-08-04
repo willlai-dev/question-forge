@@ -77,6 +77,44 @@ export class MockAiProvider implements AiProvider {
       case 'final_explanation': {
         // 題幹含衝突標記時，模擬「AI 認為題庫答案有誤」。
         // 沒有這條路徑，答案爭議與爭議題隔離（驗收 #17、#18）就只能靠讀程式碼相信它會動。
+        // 刻意讓 verifiedAnswers 與 optionAnalysis 對不起來，觸發硬性語意驗證失敗。
+        if (context.expectFailure) {
+          const wrong = context.optionKeys.filter((k) => !context.correctAnswers.includes(k));
+          return {
+            answerValidation: {
+              agreesWithStoredAnswer: true,
+              verifiedAnswers: context.correctAnswers,
+              conflictReason: null,
+              confidence: 0.8,
+            },
+            explanation: {
+              coreConcept: '（模擬）這份輸出刻意不一致，用來測試失敗路徑。',
+              solutionSteps: ['（模擬）步驟一'],
+              summary: '（模擬）刻意不一致的輸出。',
+            },
+            // 把「正確」標在錯誤選項上，必定與 verifiedAnswers 衝突。
+            optionAnalysis: context.optionKeys.map((key) => ({
+              key,
+              isCorrect: wrong.includes(key),
+              reason: `（模擬）選項 ${key} 的說明，長度足夠通過結構檢查。`,
+            })),
+            mistakeAnalysis: {
+              userWasCorrect: true,
+              whyUserMightBeWrong: null,
+              missedConditions: [],
+              errorTypeCode: context.fallbackErrorTypeCode,
+              primaryKnowledgeTag: context.allowedKnowledgeTags[0] ?? '（模擬）未知知識點',
+              secondaryKnowledgeTags: [],
+              skillTag: null,
+              reviewSuggestions: ['（模擬）複習建議'],
+              suggestedNewTags: [],
+            },
+            citations: [],
+            confidence: 0.8,
+            requiresHumanReview: false,
+          };
+        }
+
         const disagrees = context.expectConflict;
         const verifiedAnswers = disagrees
           ? context.optionKeys.filter((key) => !context.correctAnswers.includes(key)).slice(0, 1)
@@ -240,6 +278,8 @@ interface MockContext {
   expectFabricatedQuote: boolean;
   /** 這一題有沒有章節筆記。決定 researchMode 能不能選 WEB_RESEARCH。 */
   hasNotes: boolean;
+  /** 題幹含失敗標記時為 true，用來製造一筆必定失敗的任務。 */
+  expectFailure: boolean;
 
   // --- 多題整合分析（Phase 5）---
   knowledgeTagNames: string[];
@@ -264,6 +304,19 @@ export const MOCK_CONFLICT_MARKER = '【衝突測試】';
  */
 export const MOCK_FABRICATED_QUOTE_MARKER = '【捏造引用測試】';
 
+/**
+ * 題幹含這段文字時，Mock 會產生**必定通不過語意驗證**的輸出。僅供測試用。
+ *
+ * 用途是製造一筆確定會失敗的任務，好驗證「失敗之後還能不能重跑」——
+ * 那條路徑上曾經有個真實缺陷：BullMQ 的 jobId 沿用 idempotencyKey，
+ * 而失敗的任務會被保留 24 小時，期間內 add() 同 id 會被靜默忽略，
+ * 於是資料庫顯示 pending、佇列裡什麼都沒有，永遠停在排隊中。
+ *
+ * 刻意選「verifiedAnswers 與 optionAnalysis 不一致」這條規則：
+ * 它是硬性驗證且 Mock 是決定性的，因此重生幾次都會失敗，結果穩定。
+ */
+export const MOCK_ANALYSIS_FAILURE_MARKER = '【分析失敗測試】';
+
 /** Mock 從來源正文取多長當作引用。夠長才有辨識度，太長則容易撞到截斷邊界。 */
 export const MOCK_EXCERPT_CHARS = 40;
 
@@ -281,6 +334,7 @@ function parseMockContext(request: AiCompletionRequest): MockContext {
     expectConflict: false,
     expectFabricatedQuote: false,
     hasNotes: false,
+    expectFailure: false,
     knowledgeTagNames: [],
     knowledgeTagAccuracies: [],
     errorTypeCodes: [],

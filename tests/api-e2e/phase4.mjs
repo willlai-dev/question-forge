@@ -593,6 +593,73 @@ const run = async () => {
     cancelDone.status === 409 && cancelDone.body.error.code === 'AI_JOB_NOT_CANCELLABLE',
     `status=${cancelDone.status}`);
 
+  /*
+   * 取消之後必須真的重跑得起來。
+   *
+   * 這一段是真實踩到的問題：一筆分析卡在「排隊中」兩千多秒，按取消再按分析
+   * 完全沒有反應。原因有兩層，兩層都只在「取消 → 重跑」這條路徑上才會顯現：
+   *
+   *   1. cancel 用 job.isWaiting() 判斷要不要從佇列移除，但本專案的任務都帶
+   *      priority，BullMQ 會放進 prioritized 集合，isWaiting() 是 false，
+   *      於是佇列裡的殘骸從來沒被移除過。
+   *   2. enqueue 用 idempotencyKey 當 BullMQ 的 jobId，而 add() 遇到已存在的
+   *      id 會**靜默忽略**。removeOnFail 保留失敗任務 24 小時——
+   *      於是保留期內再也排不進去：資料庫 pending，佇列空的，永遠不會動。
+   *
+   * 為了讓目標任務確實停在排隊中而不是瞬間跑完，先塞滿 worker（併發 2）。
+   */
+  /*
+   * 失敗（或取消）之後必須真的重跑得起來。
+   *
+   * 真實踩到的問題：一筆分析卡在「排隊中」兩千多秒，按取消再按分析毫無反應。
+   * 從 Redis 撈出來才看清楚——那個 jobId 還躺在 BullMQ 的 failed 集合裡：
+   *
+   *   1. enqueue 用 idempotencyKey 當 BullMQ 的 jobId，而 add() 遇到**已存在**的
+   *      id 會靜默忽略，不報錯也不排入。
+   *   2. removeOnFail 保留失敗任務 24 小時、removeOnComplete 保留 1 小時。
+   *
+   *   → 保留期內再也排不進去：資料庫被重設為 pending、佇列裡什麼都沒有，
+   *     進度條永遠停在「排隊中」，而且兩邊的 log 都不會有任何錯誤。
+   *
+   * 必須用「已進入 BullMQ 終端狀態」的任務來重現。
+   * 用「取消還在排隊中的任務」是重現不出來的——那種還在 wait/prioritized，
+   * 移得掉，舊程式碼也能過。（第一版測試就是那樣寫的，對著舊程式碼跑竟然全綠。）
+   */
+  console.log('\n=== 失敗後必須重跑得起來 ===');
+  const failing = (await call('POST', '/questions', {
+    questionGroupId: group.body.id,
+    questionNumber: 97,
+    type: 'single_choice',
+    stem: '第 97 題【分析失敗測試】：下列何者屬於行政處分？',
+    options: [
+      { key: 'A', text: '拆除命令', isCorrect: true },
+      { key: 'B', text: '行政指導', isCorrect: false },
+      { key: 'C', text: '行政計畫', isCorrect: false },
+    ],
+    explanation: null,
+    reviewRequired: false,
+  }, H())).body;
+
+  const firstRun = await call('POST', `/ai/questions/${failing.id}/analyze`, { force: false }, H());
+  const firstDone = await waitForJob(firstRun.body.id);
+  check('刻意不一致的輸出會讓任務失敗', firstDone.status === 'failed',
+    `status=${firstDone.status}`);
+
+  // 同樣不帶 force、不帶作答 → 冪等鍵完全相同，必定走到「重新排入同一個 jobId」。
+  const secondRun = await call('POST', `/ai/questions/${failing.id}/analyze`, { force: false }, H());
+  check('失敗的任務可以重新啟動', secondRun.status === 202,
+    `status=${secondRun.status} ${JSON.stringify(secondRun.body?.error?.code)}`);
+  check('重跑沿用同一筆任務紀錄', secondRun.body?.id === firstRun.body.id,
+    `${secondRun.body?.id} vs ${firstRun.body.id}`);
+
+  const secondDone = await waitForJob(secondRun.body.id);
+  check('**重跑的任務真的有被執行（不是永遠停在排隊中）**',
+    secondDone?.status === 'failed',
+    `status=${secondDone?.status} step=${secondDone?.progressStep}`);
+  check('重跑後不再帶著取消時間戳', secondDone?.cancelledAt === null,
+    String(secondDone?.cancelledAt));
+
+
   const retryDone = await call('POST', `/ai/jobs/${start.body.id}/retry`, undefined, H());
   check('已完成的任務不可重跑 → 409', retryDone.status === 409, `status=${retryDone.status}`);
 
