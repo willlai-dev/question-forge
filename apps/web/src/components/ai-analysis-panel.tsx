@@ -7,7 +7,7 @@ import {
 } from '@repo/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { HoverPanel } from '@/components/hover-panel';
 import { Button, Card, ErrorBanner } from '@/components/ui';
@@ -113,9 +113,22 @@ export function AiAnalysisPanel({
     }
   }, [job.data?.status, qc, questionId]);
 
-  // 外部訊號變化時啟動分析。初始值 0 不觸發，否則一掛載就會自己跑起來。
+  /*
+   * 外部訊號**變化**時才啟動分析——掛載時絕對不能觸發。
+   *
+   * 這個面板帶著 `key={questionId}`，因此每次換題都會重新掛載。
+   * 原本只判斷 `startSignal > 0`，於是使用者用過一次快捷鍵之後，
+   * 訊號值就一直大於 0：接下來**每換到一題就自動分析那一題**，
+   * 看起來就像「分析跑到錯的題目上」。
+   *
+   * 用 ref 記住掛載當下的值，只有真正變動才動作。
+   * ref 的初始值就是掛載時的訊號，因此第一次 effect 必定相等、不觸發。
+   */
+  const lastStartSignal = useRef(startSignal);
   useEffect(() => {
-    if (startSignal > 0) start.mutate(false);
+    if (startSignal === lastStartSignal.current) return;
+    lastStartSignal.current = startSignal;
+    start.mutate(false);
     // start 是 mutation 物件，每次 render 都是新的參照，放進相依會造成無限迴圈。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startSignal]);

@@ -372,6 +372,18 @@ function useQuizKeyboard(options: {
   const latest = useRef(options);
   latest.current = options;
 
+  /*
+   * 換題就取消暫存指令。
+   *
+   * 暫存指令的語意是「我接下來要對**這一題**做什麼」，換題之後就不成立了。
+   * 用鍵盤換題時會自然被清掉（那些按鍵會落到取消分支），
+   * 但用滑鼠點「下一題」或導覽列跳題不會經過鍵盤處理器——
+   * 提示會留在畫面上，然後按 Enter 分析到另一題。
+   */
+  useEffect(() => {
+    setPending({ kind: 'none' });
+  }, [options.position]);
+
   useEffect(() => {
     const isTyping = (target: EventTarget | null): boolean => {
       if (!(target instanceof HTMLElement)) return false;
