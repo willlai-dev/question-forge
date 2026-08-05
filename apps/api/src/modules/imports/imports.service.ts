@@ -5,13 +5,18 @@ import { computeNoteContentHash, computeQuestionContentHash } from '@repo/contra
 import {
   ERROR_CODES,
   validateImportFile,
+  validateImportFiles,
   type CommitImportRequest,
   type CommitImportResult,
   type Env,
   type FixImportQuestionRequest,
   type ImportBatchResponse,
+  type ImportGroupResponse,
+  type ImportFileInput,
   type ImportQuestionResponse,
   type ImportValidationContext,
+  type NormalizedImportGroup,
+  type NormalizedImportNote,
   type NormalizedImportQuestion,
 } from '@repo/contracts';
 import { schema, type Database, type DatabaseHandle } from '@repo/db';
@@ -20,6 +25,26 @@ import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { AppException } from '../../common/app.exception';
 import { ENV } from '../../config/env.config';
 import { DATABASE } from '../../infra/infra.module';
+
+/**
+ * 把保存的原始內容還原成檔案清單。
+ *
+ * 單檔上傳直接存檔案本身；多檔上傳存成 `{ files: [{ filename, content }] }`。
+ * 兩種形狀在這裡收斂，呼叫端只看得到一種。
+ */
+function parseRawPayload(raw: Record<string, unknown>): ImportFileInput[] {
+  const files = raw.files;
+  if (Array.isArray(files)) {
+    return files.map((entry) => {
+      const item = (entry ?? {}) as Record<string, unknown>;
+      return {
+        filename: typeof item.filename === 'string' ? item.filename : null,
+        raw: item.content,
+      };
+    });
+  }
+  return [{ filename: null, raw }];
+}
 
 /** 可 commit 的暫存題目狀態（error 與 excluded 不寫入正式題庫）。 */
 const COMMITTABLE_STATUSES = ['valid', 'warning', 'fixed'] as const;
@@ -41,36 +66,48 @@ export class ImportsService {
    */
   async createBatch(
     userId: string,
-    file: { originalname: string; size: number; buffer: Buffer },
+    files: { originalname: string; size: number; buffer: Buffer }[],
   ): Promise<ImportBatchResponse> {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(file.buffer.toString('utf8'));
-    } catch (error) {
-      throw new AppException(
-        ERROR_CODES.IMPORT_FILE_INVALID_JSON,
-        `檔案不是合法的 JSON：${error instanceof Error ? error.message : '解析失敗'}`,
-      );
+    if (files.length === 0) {
+      throw new AppException(ERROR_CODES.VALIDATION_FAILED, '請至少選擇一個檔案。');
     }
 
-    const context = await this.buildValidationContext(userId, null);
-    const result = validateImportFile(parsed, context);
+    const inputs = files.map((file) => {
+      try {
+        return { filename: file.originalname, raw: JSON.parse(file.buffer.toString('utf8')) };
+      } catch (error) {
+        throw new AppException(
+          ERROR_CODES.IMPORT_FILE_INVALID_JSON,
+          `${file.originalname} 不是合法的 JSON：${error instanceof Error ? error.message : '解析失敗'}`,
+        );
+      }
+    });
 
-    const fileObject = (typeof parsed === 'object' && parsed !== null ? parsed : {}) as Record<
-      string,
-      unknown
-    >;
-    const schemaVersion =
-      typeof fileObject.schemaVersion === 'string' ? fileObject.schemaVersion : null;
+    const context = await this.buildValidationContext(userId);
+    const result = validateImportFiles(inputs, context);
+
+    const first = inputs[0]!.raw as Record<string, unknown>;
+    const schemaVersion = typeof first.schemaVersion === 'string' ? first.schemaVersion : null;
+
+    // 多檔上傳時把整批的原始內容一起保存，事後才追溯得出每一題來自哪一份。
+    const rawPayload =
+      inputs.length === 1
+        ? (inputs[0]!.raw as object)
+        : { files: inputs.map((i) => ({ filename: i.filename, content: i.raw })) };
 
     const batchId = await this.database.db.transaction(async (tx) => {
       const inserted = await tx
         .insert(schema.importBatches)
         .values({
           userId,
-          filename: file.originalname,
-          fileSize: file.size,
-          fileHash: createHash('sha256').update(file.buffer).digest('hex'),
+          filename:
+            files.length === 1
+              ? files[0]!.originalname
+              : `${files[0]!.originalname} 等 ${files.length} 個檔案`,
+          fileSize: files.reduce((sum, f) => sum + f.size, 0),
+          fileHash: createHash('sha256')
+            .update(Buffer.concat(files.map((f) => f.buffer)))
+            .digest('hex'),
           schemaVersion,
           status: result.fileIssues.some((i) => i.level === 'error')
             ? 'failed'
@@ -83,18 +120,93 @@ export class ImportsService {
           warningCount: result.warningCount,
           reviewRequiredCount: result.reviewRequiredCount,
           noteCount: result.notes.length,
-          rawPayload: parsed as object,
+          rawPayload,
           errorSummary: { fileIssues: result.fileIssues },
           validatedAt: new Date(),
         })
         .returning({ id: schema.importBatches.id });
 
       const id = inserted[0]!.id;
-      await this.persistRows(tx, id, result.rows);
+      await this.persistGroupsAndRows(tx, id, result.groups);
       return id;
     });
 
     return this.getBatch(userId, batchId);
+  }
+
+  /**
+   * 寫入題組與其題目。
+   *
+   * 題組必須先插入才拿得到 id 供題目回指——這也是為什麼題目不能像以前那樣
+   * 只用一個扁平的迴圈處理。
+   */
+  private async persistGroupsAndRows(
+    tx: Database,
+    batchId: string,
+    groups: NormalizedImportGroup[],
+  ): Promise<void> {
+    for (const group of groups) {
+      const insertedGroup = await tx
+        .insert(schema.importQuestionGroups)
+        .values({
+          batchId,
+          groupIndex: group.groupIndex,
+          sourceFilename: group.sourceFilename,
+          chapterName: group.chapterName,
+          groupName: group.groupName,
+          source: group.source,
+          year: group.year,
+          notes: group.groupNotes,
+          noteCount: group.studyNotes.length,
+          totalCount: group.rows.length,
+          validCount: group.validCount,
+          errorCount: group.errorCount,
+          warningCount: group.warningCount,
+        })
+        .returning({ id: schema.importQuestionGroups.id });
+
+      await this.persistRows(tx, batchId, insertedGroup[0]!.id, group.rows);
+    }
+  }
+
+  /**
+   * 讀取批次中的題組，並逐組算出可否寫入。
+   *
+   * 題組出現之前建立的舊批次沒有這些列，回傳空陣列即可——
+   * 那些批次全部已是終端狀態，介面沿用原本的平鋪顯示。
+   */
+  private async loadGroups(batchId: string): Promise<ImportGroupResponse[]> {
+    const rows = await this.database.db
+      .select({
+        group: schema.importQuestionGroups,
+        blocking: sql<number>`(
+          select count(*)::int from import_questions q
+          where q.import_group_id = import_question_groups.id and q.status = 'error')`,
+        committable: sql<number>`(
+          select count(*)::int from import_questions q
+          where q.import_group_id = import_question_groups.id
+            and q.status in ('valid', 'warning', 'fixed'))`,
+      })
+      .from(schema.importQuestionGroups)
+      .where(eq(schema.importQuestionGroups.batchId, batchId))
+      .orderBy(asc(schema.importQuestionGroups.groupIndex));
+
+    return rows.map(({ group, blocking, committable }) => ({
+      id: group.id,
+      groupIndex: group.groupIndex,
+      sourceFilename: group.sourceFilename,
+      chapterName: group.chapterName,
+      groupName: group.groupName,
+      totalCount: group.totalCount,
+      validCount: group.validCount,
+      errorCount: blocking,
+      warningCount: group.warningCount,
+      committedCount: group.committedCount,
+      noteCount: group.noteCount,
+      // 已經寫入過的題組不會再寫第二次。
+      canCommit: group.resultingGroupId === null && blocking === 0 && committable > 0,
+      resultingGroupId: group.resultingGroupId,
+    }));
   }
 
   async listBatches(userId: string): Promise<ImportBatchResponse[]> {
@@ -149,12 +261,22 @@ export class ImportsService {
       );
     const blockingCount = blockingRows[0]?.n ?? 0;
 
+    const groups = await this.loadGroups(batchId);
+    const fileLevelOk = fileIssues.every((i) => i.level !== 'error');
+    const batchOpen = batch.status !== 'committed' && batch.status !== 'discarded';
+
+    /*
+     * 逐題組判斷可否寫入——使用者裁決「沒錯的先匯、有錯的擋下」。
+     *
+     * 批次層的 canCommit 因此改成「**有沒有任何一組可以寫**」，
+     * 而不是「全部都沒問題」。舊語意會讓一整批 200 題因為某一組的一題 OCR
+     * 有問題就全部卡住。沒有題組的舊批次沿用原本的判準。
+     */
     const canCommit =
-      batch.status !== 'committed' &&
-      batch.status !== 'discarded' &&
-      fileIssues.every((i) => i.level !== 'error') &&
-      blockingCount === 0 &&
-      batch.totalCount > 0;
+      batchOpen &&
+      fileLevelOk &&
+      batch.totalCount > 0 &&
+      (groups.length > 0 ? groups.some((g) => g.canCommit) : blockingCount === 0);
 
     return {
       id: batch.id,
@@ -175,6 +297,7 @@ export class ImportsService {
       reviewRequiredCount: batch.reviewRequiredCount,
       committedCount: batch.committedCount,
       noteCount: batch.noteCount,
+      groups,
       fileIssues,
       canCommit,
       validatedAt: batch.validatedAt?.toISOString() ?? null,
@@ -215,6 +338,7 @@ export class ImportsService {
     return rows.map((row) => ({
       id: row.id,
       rowIndex: row.rowIndex,
+      importGroupId: row.importGroupId,
       externalId: row.externalId,
       questionNumber: row.questionNumber,
       type: row.type,
@@ -320,39 +444,66 @@ export class ImportsService {
       .where(eq(schema.importQuestions.batchId, batchId))
       .orderBy(asc(schema.importQuestions.rowIndex));
 
-    const excludedIds = new Set(
-      staged.filter((row) => row.status === 'excluded').map((row) => row.id),
+    /*
+     * 已排除與**已匯入**的列都不再參與驗證。
+     *
+     * committed 的列早就寫進 questions 了，再驗一次一定會拿它自己的 externalId
+     * 去撞資料庫裡的自己，得到 DUPLICATE_EXTERNAL_ID_IN_DB——批次於是永遠有
+     * 阻斷性錯誤，剩下那些修好的題組再也匯不進來。逐題組匯入之前不會踩到，
+     * 因為那時一個批次要嘛全進要嘛全不進。
+     */
+    const skippedIds = new Set(
+      staged
+        .filter((row) => row.status === 'excluded' || row.status === 'committed')
+        .map((row) => row.id),
     );
 
-    // 重組成匯入格式再驗證，確保修正後走的是同一套規則。
+    /*
+     * 重組成匯入格式再驗證，確保修正後走的是同一套規則。
+     *
+     * 一定要重建成**分組**的 1.2.0 結構：題號只在題組內唯一，
+     * 把多個題組的題目平鋪回單一題組，第一章與第二章的第 1 題
+     * 就會被誤判成重複題號。
+     */
+    const activeStaged = staged.filter((row) => !skippedIds.has(row.id));
+    const byGroup = new Map<string, typeof activeStaged>();
+    for (const row of activeStaged) {
+      const key = row.importGroupId ?? 'legacy';
+      const list = byGroup.get(key) ?? [];
+      list.push(row);
+      byGroup.set(key, list);
+    }
+
+    const toRawQuestion = (row: (typeof activeStaged)[number]) => ({
+      externalId: row.externalId,
+      questionNumber: row.questionNumber,
+      type: row.type,
+      stem: row.stem,
+      options: (row.options as { key: string; text: string }[] | null) ?? [],
+      correctAnswers: ((row.options as { key: string; isCorrect?: boolean }[] | null) ?? [])
+        .filter((o) => o.isCorrect)
+        .map((o) => o.key),
+      explanation: row.explanation,
+      sourcePage: row.sourcePage,
+      sourceReference: row.sourceReference,
+      reviewRequired: row.reviewRequired,
+      reviewReason: row.reviewReason,
+    });
+
     const rebuilt = {
-      schemaVersion: '1.0.0',
+      schemaVersion: '1.2.0',
       subject: { name: 'placeholder' },
-      questionGroup: { name: 'placeholder' },
-      questions: staged
-        .filter((row) => !excludedIds.has(row.id))
-        .map((row) => ({
-          externalId: row.externalId,
-          questionNumber: row.questionNumber,
-          type: row.type,
-          stem: row.stem,
-          options: (row.options as { key: string; text: string }[] | null) ?? [],
-          correctAnswers:
-            ((row.options as { key: string; isCorrect?: boolean }[] | null) ?? [])
-              .filter((o) => o.isCorrect)
-              .map((o) => o.key),
-          explanation: row.explanation,
-          sourcePage: row.sourcePage,
-          sourceReference: row.sourceReference,
-          reviewRequired: row.reviewRequired,
-          reviewReason: row.reviewReason,
-        })),
+      questionGroups: [...byGroup.values()].map((rows, index) => ({
+        name: `placeholder-${index}`,
+        questions: rows.map(toRawQuestion),
+      })),
     };
 
-    const context = await this.buildValidationContext(userId, batchId);
+    const context = await this.buildValidationContext(userId);
     const result = validateImportFile(rebuilt, context);
 
-    const activeRows = staged.filter((row) => !excludedIds.has(row.id));
+    // 驗證結果的順序 = 題組順序 × 組內順序，與這裡攤平的順序一致。
+    const activeRows = [...byGroup.values()].flat();
 
     await this.database.db.transaction(async (tx) => {
       await tx
@@ -469,16 +620,8 @@ export class ImportsService {
     userId: string,
     target: { subjectId: string; chapterId: string | null; groupId: string },
     batchId: string,
-    raw: Record<string, unknown>,
+    notes: NormalizedImportNote[],
   ): Promise<Map<string, string>> {
-    // 走與驗證階段完全相同的那支函式，避免「驗證通過的東西」與
-    // 「實際寫進去的東西」是兩套解析結果。
-    const notes = validateImportFile(raw, {
-      existingExternalIds: new Set<string>(),
-      existingQuestionNumbers: new Set<number>(),
-      maxQuestions: this.env.IMPORT_MAX_QUESTIONS,
-    }).notes;
-
     const idByKey = new Map<string, string>();
     if (notes.length === 0) return idByKey;
 
@@ -516,7 +659,7 @@ export class ImportsService {
       idByKey.set(note.noteKey, inserted[0]!.id);
     }
 
-    this.logger.log(`匯入批次 ${batchId} 寫入 ${notes.length} 段章節筆記`);
+    this.logger.log(`匯入批次 ${batchId} 的題組寫入 ${notes.length} 段章節筆記`);
     return idByKey;
   }
 
@@ -547,118 +690,243 @@ export class ImportsService {
     dto: CommitImportRequest,
     staged: (typeof schema.importQuestions.$inferSelect)[],
   ): Promise<CommitImportResult> {
+    /*
+     * 重新跑一次驗證取得題組結構。
+     *
+     * 需要的是 `relatedNoteIds` 與各題組的筆記——它們只存在原始檔案裡。
+     * 走與上傳時**完全相同**的那支函式，才不會出現「驗證通過的東西」與
+     * 「實際寫進去的東西」是兩套解析結果。
+     */
+    const context = await this.buildValidationContext(userId);
+    const validated = validateImportFiles(parseRawPayload(raw), context);
+    const noteKeysByRowIndex = new Map(
+      validated.rows.map((row) => [row.rowIndex, row.relatedNoteIds]),
+    );
+
+    const dbGroups = await this.database.db
+      .select()
+      .from(schema.importQuestionGroups)
+      .where(eq(schema.importQuestionGroups.batchId, batch.id))
+      .orderBy(asc(schema.importQuestionGroups.groupIndex));
+
+    /*
+     * 指定既有題組時整批都併進那一組（沿用既有的「補匯到同一題組」行為）。
+     *
+     * 只有單一題組的批次能這樣做：多個題組併成一組，等於把不同章節的題目
+     * 混在一起，而且各組的章節資訊會被默默丟掉。
+     */
+    const pendingGroups = dbGroups.filter((g) => g.resultingGroupId === null);
+    if (dto.targetGroupId && pendingGroups.length > 1) {
+      throw new AppException(
+        ERROR_CODES.VALIDATION_FAILED,
+        '這批有多個題組，無法全部併入同一個既有題組。請改為指定科目與章節，或分批匯入。',
+      );
+    }
+
     return this.database.db.transaction(async (tx) => {
-      const target = await this.resolveTarget(tx, userId, raw, dto);
+      // 指定既有題組時，科目與章節以那一組為準——它已經在庫裡了，不該被覆寫。
+      const existingTarget = dto.targetGroupId
+        ? await this.resolveExistingGroup(tx, userId, dto.targetGroupId)
+        : null;
+      const subjectId = existingTarget?.subjectId ?? (await this.resolveSubject(tx, userId, raw, dto));
 
-      // 筆記必須先寫入：題目的關聯要指向它們的 id。
-      const noteIdByKey = await this.commitNotes(tx, userId, target, batch.id, raw);
-      const rawQuestions = Array.isArray(raw.questions) ? raw.questions : [];
+      const results: CommitImportResult['groups'] = [];
+      let committedTotal = 0;
+      let firstChapterId: string | null = null;
+      let firstGroupId: string | null = null;
 
-      let committed = 0;
+      for (const dbGroup of dbGroups) {
+        const rows = staged.filter((row) => row.importGroupId === dbGroup.id);
+        const alreadyCommitted = dbGroup.resultingGroupId !== null;
+        const hasBlocking = batch.groups.find((g) => g.id === dbGroup.id)?.canCommit === false;
 
-      for (const row of staged) {
-        const options = (row.options as { key: string; text: string; isCorrect: boolean }[]) ?? [];
-        const contentHash = computeQuestionContentHash({
-          type: row.type ?? 'single_choice',
-          stem: row.stem ?? '',
-          options,
-        });
+        // 有阻斷性錯誤或已經寫過的題組整組跳過，其餘照常寫入。
+        if (alreadyCommitted || hasBlocking || rows.length === 0) {
+          results.push({
+            groupIndex: dbGroup.groupIndex,
+            groupName: dbGroup.groupName,
+            chapterName: dbGroup.chapterName,
+            // 這一次寫了幾題——兩種情況都是 0。回報累計值會讓呼叫端
+            // 無法分辨「剛剛寫了 2 題」與「先前就有 2 題」。
+            committedCount: 0,
+            skipped: !alreadyCommitted,
+            alreadyCommitted,
+            questionGroupId: dbGroup.resultingGroupId,
+          });
+          continue;
+        }
 
-        const inserted = await tx
-          .insert(schema.questions)
-          .values({
-            userId,
-            questionGroupId: target.groupId,
-            subjectId: target.subjectId,
-            chapterId: target.chapterId,
-            externalId: row.externalId,
-            questionNumber: row.questionNumber!,
-            type: row.type as 'single_choice' | 'multiple_choice',
-            stem: row.stem!,
-            // 沒有解析就是 null。系統絕不自動編造（規格 §5）。
-            explanation: row.explanation,
-            sourcePage: row.sourcePage,
-            sourceReference: row.sourceReference,
-            reviewRequired: row.reviewRequired,
-            reviewReason: row.reviewReason,
-            contentHash,
-          })
-          .returning({ id: schema.questions.id });
+        // 章節逐題組解析：同一批可以橫跨多個章節，這正是這個功能的重點。
+        const chapterId =
+          existingTarget?.chapterId ??
+          (await this.resolveChapterForGroup(tx, userId, subjectId, dbGroup.chapterName, dto));
 
-        const questionId = inserted[0]!.id;
+        let questionGroupId = existingTarget?.id ?? null;
+        if (questionGroupId === null) {
+          const createdGroup = await tx
+            .insert(schema.questionGroups)
+            .values({
+              subjectId,
+              chapterId,
+              name: dbGroup.groupName,
+              source: dbGroup.source,
+              year: dbGroup.year,
+              notes: dbGroup.notes,
+            })
+            .returning({ id: schema.questionGroups.id });
+          questionGroupId = createdGroup[0]!.id;
+        }
 
-        await tx.insert(schema.questionOptions).values(
-          options.map((option, index) => ({
-            questionId,
-            key: option.key,
-            text: option.text,
-            isCorrect: option.isCorrect,
-            sortOrder: index,
-          })),
+        const validatedGroup = validated.groups.find((g) => g.groupIndex === dbGroup.groupIndex);
+        const noteIdByKey = await this.commitNotes(
+          tx,
+          userId,
+          { subjectId, chapterId, groupId: questionGroupId },
+          batch.id,
+          validatedGroup?.studyNotes ?? [],
         );
 
-        await tx.insert(schema.questionVersions).values({
-          questionId,
-          version: 1,
-          contentHash,
-          snapshot: {
-            type: row.type,
-            stem: row.stem,
+        let committed = 0;
+        for (const row of rows) {
+          const options =
+            (row.options as { key: string; text: string; isCorrect: boolean }[]) ?? [];
+          const contentHash = computeQuestionContentHash({
+            type: row.type ?? 'single_choice',
+            stem: row.stem ?? '',
             options,
-            explanation: row.explanation,
-            questionNumber: row.questionNumber,
-          },
-          changeReason: `由匯入批次 ${batch.id} 建立`,
-          createdBy: userId,
-        });
+          });
 
-        // 題目與筆記的明確關聯。
-        //
-        // relatedNoteIds 不在預覽頁可編輯的欄位裡，因此以原始檔案為準，
-        // 依 rowIndex 對回去。對不上的 key 在驗證階段已經是 error，
-        // 這裡再過濾一次是為了「就算漏了也不會插出壞掉的關聯」。
-        const rawRow = rawQuestions[row.rowIndex] as Record<string, unknown> | undefined;
-        const linkedNoteIds = (
-          Array.isArray(rawRow?.relatedNoteIds) ? rawRow.relatedNoteIds : []
-        )
-          .map((key) => (typeof key === 'string' ? noteIdByKey.get(key.trim()) : undefined))
-          .filter((id): id is string => id !== undefined);
+          const inserted = await tx
+            .insert(schema.questions)
+            .values({
+              userId,
+              questionGroupId,
+              subjectId,
+              chapterId,
+              externalId: row.externalId,
+              questionNumber: row.questionNumber!,
+              type: row.type as 'single_choice' | 'multiple_choice',
+              stem: row.stem!,
+              // 沒有解析就是 null。系統絕不自動編造（規格 §5）。
+              explanation: row.explanation,
+              sourcePage: row.sourcePage,
+              sourceReference: row.sourceReference,
+              reviewRequired: row.reviewRequired,
+              reviewReason: row.reviewReason,
+              contentHash,
+            })
+            .returning({ id: schema.questions.id });
 
-        if (linkedNoteIds.length > 0) {
+          const questionId = inserted[0]!.id;
+
+          await tx.insert(schema.questionOptions).values(
+            options.map((option, index) => ({
+              questionId,
+              key: option.key,
+              text: option.text,
+              isCorrect: option.isCorrect,
+              sortOrder: index,
+            })),
+          );
+
+          await tx.insert(schema.questionVersions).values({
+            questionId,
+            version: 1,
+            contentHash,
+            snapshot: {
+              type: row.type,
+              stem: row.stem,
+              options,
+              explanation: row.explanation,
+              questionNumber: row.questionNumber,
+            },
+            changeReason: `由匯入批次 ${batch.id} 建立`,
+            createdBy: userId,
+          });
+
+          /*
+           * 題目與筆記的明確關聯。
+           *
+           * relatedNoteIds 以**驗證結果**為準而不是直接讀 raw.questions[rowIndex]：
+           * 多題組時 rowIndex 是跨題組的流水號，拿它去索引單一題組的 questions
+           * 陣列會對到別組的題目。
+           */
+          const linkedNoteIds = (noteKeysByRowIndex.get(row.rowIndex) ?? [])
+            .map((key) => noteIdByKey.get(key))
+            .filter((id): id is string => id !== undefined);
+
+          if (linkedNoteIds.length > 0) {
+            await tx
+              .insert(schema.questionNoteLinks)
+              .values(
+                [...new Set(linkedNoteIds)].map((studyNoteId) => ({ questionId, studyNoteId })),
+              )
+              .onConflictDoNothing();
+          }
+
           await tx
-            .insert(schema.questionNoteLinks)
-            .values([...new Set(linkedNoteIds)].map((studyNoteId) => ({ questionId, studyNoteId })))
-            .onConflictDoNothing();
+            .update(schema.importQuestions)
+            .set({ status: 'committed', resultingQuestionId: questionId, updatedAt: new Date() })
+            .where(eq(schema.importQuestions.id, row.id));
+
+          committed += 1;
         }
 
         await tx
-          .update(schema.importQuestions)
-          .set({ status: 'committed', resultingQuestionId: questionId, updatedAt: new Date() })
-          .where(eq(schema.importQuestions.id, row.id));
+          .update(schema.importQuestionGroups)
+          .set({ committedCount: committed, resultingGroupId: questionGroupId, updatedAt: new Date() })
+          .where(eq(schema.importQuestionGroups.id, dbGroup.id));
 
-        committed += 1;
+        committedTotal += committed;
+        firstChapterId ??= chapterId;
+        firstGroupId ??= questionGroupId;
+
+        results.push({
+          groupIndex: dbGroup.groupIndex,
+          groupName: dbGroup.groupName,
+          chapterName: dbGroup.chapterName,
+          committedCount: committed,
+          skipped: false,
+          alreadyCommitted: false,
+          questionGroupId,
+        });
       }
 
+      if (committedTotal === 0) {
+        throw new AppException(
+          ERROR_CODES.IMPORT_HAS_BLOCKING_ERRORS,
+          '沒有任何可匯入的題目（全部有錯誤或已被排除）。',
+        );
+      }
+
+      /*
+       * 還有題組沒寫入時**不能**把批次標成 committed。
+       *
+       * 標成 committed 會讓使用者再也無法在修正錯誤後把剩下的題組匯進來——
+       * 那正是「沒錯的先匯」這個決定要換到的東西。
+       */
+      const allDone = results.every((r) => !r.skipped);
       await tx
         .update(schema.importBatches)
         .set({
-          status: 'committed',
-          committedCount: committed,
-          committedAt: new Date(),
-          targetSubjectId: target.subjectId,
-          targetChapterId: target.chapterId,
-          targetGroupId: target.groupId,
+          status: allDone ? 'committed' : 'partially_valid',
+          committedCount: (batch.committedCount ?? 0) + committedTotal,
+          committedAt: allDone ? new Date() : null,
+          targetSubjectId: subjectId,
+          targetChapterId: firstChapterId,
+          targetGroupId: firstGroupId,
           updatedAt: new Date(),
         })
         .where(eq(schema.importBatches.id, batch.id));
 
       return {
         batchId: batch.id,
-        committedCount: committed,
-        skippedCount: batch.totalCount - committed,
-        subjectId: target.subjectId,
-        chapterId: target.chapterId,
-        questionGroupId: target.groupId,
+        committedCount: committedTotal,
+        skippedCount: batch.totalCount - committedTotal,
+        subjectId,
+        chapterId: firstChapterId,
+        questionGroupId: firstGroupId!,
+        groups: results,
       };
     });
   }
@@ -682,6 +950,7 @@ export class ImportsService {
   private async persistRows(
     tx: Database,
     batchId: string,
+    importGroupId: string,
     rows: NormalizedImportQuestion[],
   ): Promise<void> {
     for (const row of rows) {
@@ -689,6 +958,7 @@ export class ImportsService {
         .insert(schema.importQuestions)
         .values({
           batchId,
+          importGroupId,
           rowIndex: row.rowIndex,
           externalId: row.externalId,
           questionNumber: row.questionNumber,
@@ -720,16 +990,11 @@ export class ImportsService {
     }
   }
 
-  private async buildValidationContext(
-    userId: string,
-    excludeBatchId: string | null,
-  ): Promise<ImportValidationContext> {
+  private async buildValidationContext(userId: string): Promise<ImportValidationContext> {
     const existing = await this.database.db
       .select({ externalId: schema.questions.externalId })
       .from(schema.questions)
       .where(and(eq(schema.questions.userId, userId), isNull(schema.questions.deletedAt)));
-
-    void excludeBatchId;
 
     return {
       existingExternalIds: new Set(
@@ -779,73 +1044,96 @@ export class ImportsService {
   }
 
   /** 決定匯入目標：優先使用呼叫端指定的 ID，否則依檔案內容建立或沿用。 */
-  private async resolveTarget(
+  /**
+   * 取出使用者指定的既有題組。
+   *
+   * 科目與章節都跟著它走：題組已經在庫裡，匯入不該把它搬家。
+   */
+  private async resolveExistingGroup(
+    tx: Database,
+    userId: string,
+    groupId: string,
+  ): Promise<{ id: string; subjectId: string; chapterId: string | null }> {
+    const rows = await tx
+      .select({
+        id: schema.questionGroups.id,
+        subjectId: schema.questionGroups.subjectId,
+        chapterId: schema.questionGroups.chapterId,
+      })
+      .from(schema.questionGroups)
+      .innerJoin(schema.subjects, eq(schema.subjects.id, schema.questionGroups.subjectId))
+      .where(
+        and(
+          eq(schema.questionGroups.id, groupId),
+          eq(schema.subjects.userId, userId),
+          isNull(schema.questionGroups.deletedAt),
+        ),
+      )
+      .limit(1);
+
+    const group = rows[0];
+    if (!group) {
+      throw new AppException(ERROR_CODES.NOT_FOUND, '找不到指定的目標題組。');
+    }
+    return group;
+  }
+
+  /**
+   * 決定整批要匯入哪個科目。
+   *
+   * 一個批次只有一個科目——多檔上傳時驗證階段已經擋掉科目不一致的情況。
+   * 章節則逐題組決定，因為「同一科目的不同章節」正是這個功能存在的理由。
+   */
+  private async resolveSubject(
     tx: Database,
     userId: string,
     raw: Record<string, unknown>,
     dto: CommitImportRequest,
-  ): Promise<{ subjectId: string; chapterId: string | null; groupId: string }> {
-    if (dto.targetGroupId) {
-      const rows = await tx
-        .select({
-          id: schema.questionGroups.id,
-          subjectId: schema.questionGroups.subjectId,
-          chapterId: schema.questionGroups.chapterId,
-        })
-        .from(schema.questionGroups)
-        .innerJoin(schema.subjects, eq(schema.subjects.id, schema.questionGroups.subjectId))
-        .where(
-          and(
-            eq(schema.questionGroups.id, dto.targetGroupId),
-            eq(schema.subjects.userId, userId),
-            isNull(schema.questionGroups.deletedAt),
-          ),
-        )
-        .limit(1);
-
-      const group = rows[0];
-      if (!group) {
-        throw new AppException(ERROR_CODES.QUESTION_GROUP_NOT_FOUND, '找不到指定的目標題組。');
-      }
-      return { subjectId: group.subjectId, chapterId: group.chapterId, groupId: group.id };
-    }
-
-    const subjectName = this.nameOf(raw.subject) ?? '未命名科目';
-    const chapterName = this.nameOf(raw.chapter);
-    const groupName = this.nameOf(raw.questionGroup) ?? '未命名題組';
-    const groupMeta = (raw.questionGroup ?? {}) as Record<string, unknown>;
-
-    const subjectId =
-      dto.targetSubjectId ?? (await this.findOrCreateSubject(tx, userId, subjectName));
-
-    // 指定的科目必須是自己的，否則等於可以把題目匯進別人的科目。
+  ): Promise<string> {
     if (dto.targetSubjectId) {
       const owned = await tx
         .select({ id: schema.subjects.id })
         .from(schema.subjects)
-        .where(and(eq(schema.subjects.id, subjectId), eq(schema.subjects.userId, userId)))
+        .where(
+          and(eq(schema.subjects.id, dto.targetSubjectId), eq(schema.subjects.userId, userId)),
+        )
         .limit(1);
       if (owned.length === 0) {
         throw new AppException(ERROR_CODES.NOT_FOUND, '找不到指定的目標科目。');
       }
+      return dto.targetSubjectId;
     }
 
-    let chapterId = dto.targetChapterId ?? null;
+    const first = parseRawPayload(raw)[0]?.raw as Record<string, unknown> | undefined;
+    const subject = (first?.subject ?? {}) as Record<string, unknown>;
+    const name = typeof subject.name === 'string' && subject.name.trim() !== ''
+      ? subject.name.trim()
+      : '未命名科目';
+    return this.findOrCreateSubject(tx, userId, name);
+  }
 
-    /*
-     * 指定的章節必須屬於指定的科目。
-     *
-     * 不擋的話只會撞到 question_groups 的複合外鍵，
-     * 使用者拿到的是一個看不懂的 500，而不是「這個章節不屬於這個科目」。
-     */
-    if (chapterId) {
+  /**
+   * 決定某個題組要落在哪個章節。
+   *
+   * 呼叫端明確指定章節時整批共用那一個；否則依題組自己的章節名稱建立或沿用。
+   * 指定的章節必須屬於指定的科目——不擋的話只會撞到 question_groups 的
+   * 複合外鍵，使用者拿到的是看不懂的 500。
+   */
+  private async resolveChapterForGroup(
+    tx: Database,
+    userId: string,
+    subjectId: string,
+    chapterName: string | null,
+    dto: CommitImportRequest,
+  ): Promise<string | null> {
+    if (dto.targetChapterId) {
       const rows = await tx
         .select({ id: schema.chapters.id })
         .from(schema.chapters)
         .innerJoin(schema.subjects, eq(schema.subjects.id, schema.chapters.subjectId))
         .where(
           and(
-            eq(schema.chapters.id, chapterId),
+            eq(schema.chapters.id, dto.targetChapterId),
             eq(schema.chapters.subjectId, subjectId),
             eq(schema.subjects.userId, userId),
           ),
@@ -857,37 +1145,13 @@ export class ImportsService {
           '指定的章節不屬於指定的科目。',
         );
       }
+      return dto.targetChapterId;
     }
 
-    if (!chapterId && chapterName) {
-      chapterId = await this.findOrCreateChapter(tx, subjectId, chapterName);
-    }
-
-    const created = await tx
-      .insert(schema.questionGroups)
-      .values({
-        subjectId,
-        chapterId,
-        name: groupName,
-        source: typeof groupMeta.source === 'string' ? groupMeta.source : null,
-        year: typeof groupMeta.year === 'number' ? groupMeta.year : null,
-        notes: typeof groupMeta.notes === 'string' ? groupMeta.notes : null,
-        description: typeof groupMeta.description === 'string' ? groupMeta.description : null,
-      })
-      .returning({ id: schema.questionGroups.id });
-
-    return { subjectId, chapterId, groupId: created[0]!.id };
+    if (!chapterName) return null;
+    return this.findOrCreateChapter(tx, subjectId, chapterName);
   }
 
-  /**
-   * 檢查 commit 指定的匯入目標。
-   *
-   * 這兩個值直接來自請求主體，之前完全沒有驗證就拿去建題組：
-   *   - 沒有檢查科目是否屬於自己（單一使用者情境下影響有限，但這是不該省的檢查）；
-   *   - 沒有檢查章節是否屬於該科目。後者一般使用者就碰得到——
-   *     真正擋下它的是 question_groups 的複合外鍵，但那會以未處理的資料庫錯誤浮出成 500，
-   *     而不是一個看得懂的 409。
-   */
   private async assertCommitTarget(userId: string, dto: CommitImportRequest): Promise<void> {
     if (!dto.targetSubjectId && !dto.targetChapterId) return;
 
@@ -936,11 +1200,6 @@ export class ImportsService {
     }
   }
 
-  private nameOf(value: unknown): string | null {
-    if (typeof value !== 'object' || value === null) return null;
-    const name = (value as Record<string, unknown>).name;
-    return typeof name === 'string' && name.trim() !== '' ? name.trim() : null;
-  }
 
   private async findOrCreateSubject(tx: Database, userId: string, name: string): Promise<string> {
     const existing = await tx

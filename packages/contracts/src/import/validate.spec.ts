@@ -1,7 +1,15 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
 import { IMPORT_ISSUE_CODES } from './types';
-import { validateImportFile, type ImportValidationContext } from './validate';
+import {
+  validateImportFile,
+  validateImportFiles,
+  type ImportValidationContext,
+} from './validate';
+import { SUPPORTED_SCHEMA_VERSIONS } from './types';
 
 const ctx = (overrides: Partial<ImportValidationContext> = {}): ImportValidationContext => ({
   existingExternalIds: new Set<string>(),
@@ -505,4 +513,269 @@ describe('章節筆記', () => {
     expect(result.rows[0]!.relatedNoteIds).toEqual([]);
     expect(result.rows[0]!.hasError).toBe(false);
   });
+});
+
+/**
+ * 多題組匯入（schemaVersion 1.2.0 與多檔上傳）。
+ *
+ * 使用者情境：一次匯入同一科目、不同章節的多份題庫。
+ */
+describe('多題組', () => {
+  const groupFile = (groups: unknown, overrides: Record<string, unknown> = {}) => ({
+    schemaVersion: '1.2.0',
+    subject: { name: '投資學' },
+    questionGroups: groups,
+    ...overrides,
+  });
+
+  const grp = (name: string, chapter: string | null, questions: unknown[]) => ({
+    name,
+    ...(chapter ? { chapter: { name: chapter } } : {}),
+    questions,
+  });
+
+  it('1.2.0 的多題組會被拆成多個題組', () => {
+    const result = validateImportFile(
+      groupFile([
+        grp('第一章練習題', '第一章', [question({ externalId: 'A-1', questionNumber: 1 })]),
+        grp('第二章練習題', '第二章', [question({ externalId: 'B-1', questionNumber: 1 })]),
+      ]),
+      ctx(),
+    );
+    expect(result.fileIssues.filter((i) => i.level === 'error')).toEqual([]);
+    expect(result.groups).toHaveLength(2);
+    expect(result.groups.map((g) => g.chapterName)).toEqual(['第一章', '第二章']);
+    expect(result.subjectName).toBe('投資學');
+  });
+
+  it('**不同題組的題號可以重複**（各自是獨立的題組）', () => {
+    // 第一章第 1 題與第二章第 1 題本來就會撞號；題號唯一性只在題組內成立，
+    // 資料庫的唯一索引也是那個範圍。
+    const result = validateImportFile(
+      groupFile([
+        grp('第一章', '第一章', [question({ externalId: 'A-1', questionNumber: 1 })]),
+        grp('第二章', '第二章', [question({ externalId: 'B-1', questionNumber: 1 })]),
+      ]),
+      ctx(),
+    );
+    expect(result.errorCount).toBe(0);
+  });
+
+  it('同一題組內題號重複仍然要擋下', () => {
+    const result = validateImportFile(
+      groupFile([
+        grp('第一章', '第一章', [
+          question({ externalId: 'A-1', questionNumber: 1 }),
+          question({ externalId: 'A-2', questionNumber: 1 }),
+        ]),
+      ]),
+      ctx(),
+    );
+    expect(result.errorCount).toBe(2);
+    expect(codesOf(result)).toContain(IMPORT_ISSUE_CODES.DUPLICATE_QUESTION_NUMBER_IN_BATCH);
+  });
+
+  it('**externalId 跨題組仍必須唯一**（它是全域識別）', () => {
+    const result = validateImportFile(
+      groupFile([
+        grp('第一章', '第一章', [question({ externalId: 'SAME', questionNumber: 1 })]),
+        grp('第二章', '第二章', [question({ externalId: 'SAME', questionNumber: 1 })]),
+      ]),
+      ctx(),
+    );
+    expect(codesOf(result)).toContain(IMPORT_ISSUE_CODES.DUPLICATE_EXTERNAL_ID_IN_BATCH);
+  });
+
+  it('**rowIndex 在整個批次內唯一**（資料庫唯一索引是 batchId + rowIndex）', () => {
+    const result = validateImportFile(
+      groupFile([
+        grp('第一章', '第一章', [
+          question({ externalId: 'A-1', questionNumber: 1 }),
+          question({ externalId: 'A-2', questionNumber: 2 }),
+        ]),
+        grp('第二章', '第二章', [question({ externalId: 'B-1', questionNumber: 1 })]),
+      ]),
+      ctx(),
+    );
+    const indexes = result.rows.map((r) => r.rowIndex);
+    expect(indexes).toEqual([0, 1, 2]);
+  });
+
+  it('每一列都記得自己屬於哪個題組', () => {
+    const result = validateImportFile(
+      groupFile([
+        grp('第一章', '第一章', [question({ externalId: 'A-1', questionNumber: 1 })]),
+        grp('第二章', '第二章', [question({ externalId: 'B-1', questionNumber: 1 })]),
+      ]),
+      ctx(),
+    );
+    expect(result.rows.map((r) => r.groupIndex)).toEqual([0, 1]);
+  });
+
+  it('題組各自帶自己的章節筆記', () => {
+    const result = validateImportFile(
+      groupFile([
+        {
+          name: '第一章',
+          chapter: { name: '第一章' },
+          notes: [{ noteId: 'N1', content: '第一章的筆記' }],
+          questions: [question({ externalId: 'A-1', relatedNoteIds: ['N1'] })],
+        },
+        {
+          name: '第二章',
+          chapter: { name: '第二章' },
+          questions: [question({ externalId: 'B-1' })],
+        },
+      ]),
+      ctx(),
+    );
+    expect(result.groups[0]!.studyNotes).toHaveLength(1);
+    expect(result.groups[1]!.studyNotes).toHaveLength(0);
+    expect(result.errorCount).toBe(0);
+  });
+
+  it('**筆記引用不跨題組**：引用別組的 noteId 要擋下', () => {
+    const result = validateImportFile(
+      groupFile([
+        {
+          name: '第一章',
+          notes: [{ noteId: 'N1', content: '第一章的筆記' }],
+          questions: [question({ externalId: 'A-1' })],
+        },
+        {
+          name: '第二章',
+          questions: [question({ externalId: 'B-1', relatedNoteIds: ['N1'] })],
+        },
+      ]),
+      ctx(),
+    );
+    expect(codesOf(result, 1)).toContain(IMPORT_ISSUE_CODES.UNKNOWN_NOTE_REFERENCE);
+  });
+
+  it('**題組的 notes 是字串時視為題組備註**（不是章節筆記）', () => {
+    // 舊格式把備註放 questionGroup.notes、章節筆記放根層 notes；
+    // 1.2.0 兩者同名，只能靠型別分流。
+    const result = validateImportFile(
+      groupFile([
+        { name: '第一章', notes: '這份是考古題', questions: [question({ externalId: 'A-1' })] },
+      ]),
+      ctx(),
+    );
+    expect(result.errorCount).toBe(0);
+    expect(result.fileIssues.filter((i) => i.level === 'error')).toEqual([]);
+    expect(result.groups[0]!.studyNotes).toEqual([]);
+    expect(result.groups[0]!.groupNotes).toBe('這份是考古題');
+  });
+
+  it('questionGroups 不是陣列 → 檔案層錯誤', () => {
+    const result = validateImportFile(groupFile('nope'), ctx());
+    expect(result.fileIssues.map((i) => i.code)).toContain(IMPORT_ISSUE_CODES.INVALID_GROUP_SHAPE);
+  });
+
+  it('題組數量超過上限 → 擋下', () => {
+    const many = Array.from({ length: 51 }, (_, i) =>
+      grp(`第 ${i} 章`, null, [question({ externalId: `X-${i}` })]),
+    );
+    const result = validateImportFile(groupFile(many), ctx());
+    expect(result.fileIssues.map((i) => i.code)).toContain(IMPORT_ISSUE_CODES.TOO_MANY_GROUPS);
+  });
+
+  it('**1.0.0 的單題組檔案被正規化成一個題組**（下游只有一種形狀）', () => {
+    const result = validateImportFile(file([question()]), ctx());
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0]!.groupName).toBe('112年地特');
+    expect(result.groups[0]!.chapterName).toBe('第三章');
+  });
+});
+
+describe('多檔上傳', () => {
+  const oneGroupFile = (subject: string, chapter: string, externalId: string) => ({
+    schemaVersion: '1.0.0',
+    subject: { name: subject },
+    chapter: { name: chapter },
+    questionGroup: { name: `${chapter}題本` },
+    questions: [question({ externalId, questionNumber: 1 })],
+  });
+
+  it('多個舊格式檔案合併成多個題組', () => {
+    const result = validateImportFiles(
+      [
+        { filename: 'ch1.json', raw: oneGroupFile('投資學', '第一章', 'A-1') },
+        { filename: 'ch2.json', raw: oneGroupFile('投資學', '第二章', 'B-1') },
+      ],
+      ctx(),
+    );
+    expect(result.fileIssues.filter((i) => i.level === 'error')).toEqual([]);
+    expect(result.groups).toHaveLength(2);
+    expect(result.groups.map((g) => g.sourceFilename)).toEqual(['ch1.json', 'ch2.json']);
+  });
+
+  it('**各檔科目不一致 → 擋下**（否則這批要匯到哪裡沒有唯一答案）', () => {
+    const result = validateImportFiles(
+      [
+        { filename: 'a.json', raw: oneGroupFile('投資學', '第一章', 'A-1') },
+        { filename: 'b.json', raw: oneGroupFile('會計學', '第一章', 'B-1') },
+      ],
+      ctx(),
+    );
+    expect(result.fileIssues.map((i) => i.code)).toContain(
+      IMPORT_ISSUE_CODES.SUBJECT_MISMATCH_ACROSS_FILES,
+    );
+  });
+
+  it('錯誤訊息帶得出是哪一個檔案', () => {
+    const result = validateImportFiles(
+      [
+        { filename: 'good.json', raw: oneGroupFile('投資學', '第一章', 'A-1') },
+        { filename: 'bad.json', raw: { schemaVersion: '9.9.9', subject: { name: '投資學' } } },
+      ],
+      ctx(),
+    );
+    expect(JSON.stringify(result.fileIssues)).toContain('bad.json');
+  });
+
+  it('題號在不同檔案之間可以重複', () => {
+    const result = validateImportFiles(
+      [
+        { filename: 'ch1.json', raw: oneGroupFile('投資學', '第一章', 'A-1') },
+        { filename: 'ch2.json', raw: oneGroupFile('投資學', '第二章', 'B-1') },
+      ],
+      ctx(),
+    );
+    expect(result.errorCount).toBe(0);
+  });
+
+  it('空的檔案清單不會爆炸', () => {
+    const result = validateImportFiles([], ctx());
+    expect(result.groups).toEqual([]);
+    expect(result.fileIssues.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * 文件與驗證器不能各說各話。
+ *
+ * `GET /imports/schema` 直接把 docs/QUESTION_IMPORT_SCHEMA.json 回給前端，
+ * 使用者照著上面的範例產生 JSON。範例若不被自家驗證器接受，
+ * 錯的是我們而不是使用者——所以把文件裡的範例真的跑一遍。
+ */
+describe('文件範例', () => {
+  const docPath = fileURLToPath(new URL('../../../../docs/QUESTION_IMPORT_SCHEMA.json', import.meta.url));
+  const doc = JSON.parse(readFileSync(docPath, 'utf-8')) as {
+    properties: { schemaVersion: { enum: string[] } };
+    examples: unknown[];
+  };
+
+  it('文件宣告的版本與程式支援的版本一致', () => {
+    expect(doc.properties.schemaVersion.enum).toEqual([...SUPPORTED_SCHEMA_VERSIONS]);
+  });
+
+  it.each(doc.examples.map((ex, i) => [i, ex] as const))(
+    '範例 %i 通得過驗證',
+    (_i, example) => {
+      const result = validateImportFile(example, ctx());
+      expect(result.fileIssues.filter((issue) => issue.level === 'error')).toEqual([]);
+      expect(result.errorCount).toBe(0);
+    },
+  );
 });

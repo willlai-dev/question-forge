@@ -169,7 +169,7 @@
 |---|---|---|
 | `GET` | `/imports/schema` | 回傳 JSON Schema 本體 |
 | `GET` | `/imports/prompt` | 回傳給外部 LLM 的固定 Prompt 文字 |
-| `POST` | `/imports` | `multipart/form-data`，欄位 `file`。大小上限 `IMPORT_MAX_FILE_SIZE_BYTES` |
+| `POST` | `/imports` | `multipart/form-data`，欄位 `file`，**可重複帶多個檔案**（上限 50）。逐檔套用大小上限 `IMPORT_MAX_FILE_SIZE_BYTES`；多檔會合併成同一個批次，各檔的科目必須一致 |
 | `GET` | `/imports` | 批次列表 |
 | `GET` | `/imports/:id` | 批次摘要與統計 |
 | `GET` | `/imports/:id/questions` | `?status=error\|warning\|valid\|excluded&page=` |
@@ -186,9 +186,28 @@ uploaded → validating → validated ─────┐
                      ↘ partially_valid ┤→ committing → committed
                      ↘ failed          │
                                        └→ discarded
+
+partially_valid → committing → partially_valid   （部分題組匯入，其餘待修正）
 ```
 
-`POST /imports/:id/commit` 只在沒有阻斷性錯誤（level = `error` 且未被排除）時才成功，否則回 `400 IMPORT_HAS_BLOCKING_ERRORS`，並在 `details` 列出仍待處理的題目。
+`POST /imports/:id/commit` **逐題組**寫入：沒有阻斷性錯誤（level = `error` 且未被排除）的題組照常匯入，
+有錯的整組跳過。全部題組都被跳過時才回 `400 IMPORT_HAS_BLOCKING_ERRORS`。
+
+回應的 `groups[]` 逐組回報 `committedCount`、`skipped` 與 `questionGroupId`。
+只要還有題組被跳過，批次**維持 `partially_valid`**——標成 `committed` 會讓使用者
+再也無法在修正錯誤後補匯剩下的題組。修好之後再呼叫一次 commit 即可，
+已寫入的題組不會重複寫入。
+
+### 多題組
+
+`schemaVersion` 1.2.0 起，一個檔案可用 `questionGroups[]` 放多個題組，各自帶
+`chapter`、`notes` 與 `questions`。1.0.0 / 1.1.0 的單題組檔案會被正規化成「只有一個題組」，
+下游只看得到一種形狀。
+
+- **題號只在題組內唯一**——各章都從第 1 題開始是正常的。
+- **`externalId` 整批唯一**，跨題組、跨檔案都算。
+- **`relatedNoteIds` 不可跨題組引用。**
+- 單批題組數上限 50（`TOO_MANY_GROUPS`）。
 
 ### 5. 匯入驗證規則與錯誤碼
 
@@ -206,6 +225,9 @@ uploaded → validating → validated ─────┐
 | `DUPLICATE_EXTERNAL_ID_IN_DB` | error | 與既有題庫的 `externalId` 衝突 | §5 |
 | `DUPLICATE_QUESTION_NUMBER` | error | 同題組題號重複 | §5 |
 | `INVALID_SOURCE_PAGE` | error | `sourcePage` 非正整數 | §5 |
+| `INVALID_GROUP_SHAPE` | error | `questionGroups` 不是陣列，或其成員不是物件 | §5 |
+| `TOO_MANY_GROUPS` | error | 單批題組數超過 50 | §5 |
+| `SUBJECT_MISMATCH_ACROSS_FILES` | error | 多檔上傳時各檔的 `subject.name` 不一致 | §5 |
 | `MISSING_EXPLANATION` | **warning** | `explanation` 為 null。**只標示，絕不自動編造** | §5 |
 | `REVIEW_REQUIRED` | **warning** | `reviewRequired = true`，預覽介面須醒目顯示 | §5 |
 | `OPTION_KEY_NOT_UPPERCASE` | warning | 選項 key 非大寫英文字母 | §5 |

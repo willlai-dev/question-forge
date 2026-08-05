@@ -12,10 +12,10 @@ import {
   Patch,
   Post,
   Query,
-  UploadedFile,
+  UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import { ApiBody, ApiConsumes, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   commitImportSchema,
@@ -58,6 +58,9 @@ function readDoc(filename: string): string {
   throw new AppException(ERROR_CODES.INTERNAL_ERROR, `找不到文件檔案 ${filename}。`);
 }
 
+/** 單次上傳的檔案數量上限。多到這個程度通常是選錯了資料夾。 */
+const MAX_UPLOAD_FILES = 50;
+
 @ApiTags('imports')
 @Controller('imports')
 export class ImportsController {
@@ -85,10 +88,16 @@ export class ImportsController {
   }
 
   @Post()
-  @UseInterceptors(FileInterceptor('file'))
+  // 一次可上傳多個檔案：使用者的 PDF 通常一章一份，逐份匯入既慢又要點很多次。
+  @UseInterceptors(FilesInterceptor('file', MAX_UPLOAD_FILES))
   @ApiConsumes('multipart/form-data')
   @ApiBody({
-    schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } },
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'array', items: { type: 'string', format: 'binary' } },
+      },
+    },
   })
   @ApiOperation({
     summary: '上傳題庫 JSON',
@@ -98,35 +107,40 @@ export class ImportsController {
   @ApiOkResponse({ type: ImportBatchResponseDto })
   upload(
     @CurrentUser() user: AuthenticatedUser,
-    @UploadedFile() file: Express.Multer.File | undefined,
+    @UploadedFiles() files: Express.Multer.File[] | undefined,
   ): Promise<ImportBatchResponse> {
     // 刻意不用 Nest 的 FileTypeValidator：它預設會做 magic number 檢查，
     // 而 JSON 是純文字、沒有 magic bytes，合法檔案反而會被擋下。
     // 內容是否為合法 JSON 由 service 解析時判定，錯誤訊息也更具體。
-    if (!file) {
+    if (!files || files.length === 0) {
       throw new AppException(ERROR_CODES.VALIDATION_FAILED, '請選擇要上傳的 JSON 檔案。');
     }
 
-    if (file.size > this.env.IMPORT_MAX_FILE_SIZE_BYTES) {
-      throw new AppException(
-        ERROR_CODES.PAYLOAD_TOO_LARGE,
-        `檔案大小超過上限 ${this.env.IMPORT_MAX_FILE_SIZE_BYTES} bytes。`,
-      );
-    }
-
     const allowedTypes = ['application/json', 'text/plain', 'application/octet-stream'];
-    if (file.mimetype && !allowedTypes.includes(file.mimetype)) {
-      throw new AppException(
-        ERROR_CODES.UNSUPPORTED_MEDIA_TYPE,
-        `不支援的檔案型別「${file.mimetype}」，請上傳 JSON 檔案。`,
-      );
+    for (const file of files) {
+      // 逐檔檢查大小，而不是只看總和：單一超大檔案照樣要擋下來。
+      if (file.size > this.env.IMPORT_MAX_FILE_SIZE_BYTES) {
+        throw new AppException(
+          ERROR_CODES.PAYLOAD_TOO_LARGE,
+          `${decodeMultipartFilename(file.originalname)} 超過單檔大小上限 ${this.env.IMPORT_MAX_FILE_SIZE_BYTES} bytes。`,
+        );
+      }
+      if (file.mimetype && !allowedTypes.includes(file.mimetype)) {
+        throw new AppException(
+          ERROR_CODES.UNSUPPORTED_MEDIA_TYPE,
+          `不支援的檔案型別「${file.mimetype}」，請上傳 JSON 檔案。`,
+        );
+      }
     }
 
-    return this.importsService.createBatch(user.id, {
-      ...file,
-      // busboy 以 latin1 解讀 multipart 標頭，中文檔名會變成 mojibake，需還原。
-      originalname: decodeMultipartFilename(file.originalname),
-    });
+    return this.importsService.createBatch(
+      user.id,
+      files.map((file) => ({
+        ...file,
+        // busboy 以 latin1 解讀 multipart 標頭，中文檔名會變成 mojibake，需還原。
+        originalname: decodeMultipartFilename(file.originalname),
+      })),
+    );
   }
 
   @Get()

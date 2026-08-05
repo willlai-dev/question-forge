@@ -42,13 +42,14 @@ function ImportsView() {
   });
 
   const upload = useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async (files: File[]) => {
       // 上傳走 multipart，不經過 api-client 的 JSON 路徑，但 CSRF token
       // 必須向 getCsrfToken() 取得 —— 直接呼叫 /auth/csrf 會產生新 token
       // 並覆寫 cookie，讓 api-client 快取的那個立刻失效，後續操作全部 403。
       const csrfToken = await getCsrfToken();
       const form = new FormData();
-      form.append('file', file);
+      // 同一個欄位名稱重複 append 就是多檔；後端以 FilesInterceptor 接收。
+      for (const file of files) form.append('file', file);
       const res = await fetch(`${API_BASE}/imports`, {
         method: 'POST',
         credentials: 'include',
@@ -112,20 +113,25 @@ function ImportsView() {
 
       <Card className="space-y-4">
         <h2 className="font-medium">步驟 2：上傳 JSON 檔</h2>
+        <p className="text-xs text-muted-foreground">
+          可一次選多個檔案（例如各章節一份），會合併成同一個批次一起預覽與匯入。
+          <strong className="ml-1">多檔時各檔的科目必須相同。</strong>
+        </p>
         {error && <ErrorBanner message={error.message} details={error.details} />}
         <div className="flex items-center gap-3">
           <input
             ref={fileRef}
             type="file"
             accept=".json,application/json"
+            multiple
             className="text-sm file:mr-3 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-sm"
           />
           <Button
             type="button"
             disabled={upload.isPending}
             onClick={() => {
-              const file = fileRef.current?.files?.[0];
-              if (file) upload.mutate(file);
+              const files = [...(fileRef.current?.files ?? [])];
+              if (files.length > 0) upload.mutate(files);
             }}
           >
             {upload.isPending ? '上傳中…' : '上傳並驗證'}

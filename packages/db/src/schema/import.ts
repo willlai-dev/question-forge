@@ -73,6 +73,53 @@ export const importBatches = pgTable(
 );
 
 /**
+ * 匯入批次中的題組。
+ *
+ * 一個批次可以帶多個題組（同一科目的不同章節），來源有兩種：
+ * 單一檔案內的 `questionGroups` 陣列（格式 1.2.0），或一次上傳多個舊格式檔案。
+ * 兩種輸入都在驗證階段正規化成這張表，因此**後續流程只有一條路徑**。
+ *
+ * 每個題組各自判斷能不能 commit：使用者裁決「沒錯的先匯、有錯的擋下」。
+ * 匯入 200 題只因為一題 OCR 有問題就全部卡住，不合理。
+ */
+export const importQuestionGroups = pgTable(
+  'import_question_groups',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    batchId: uuid('batch_id')
+      .notNull()
+      .references(() => importBatches.id, { onDelete: 'cascade' }),
+    /** 在批次中的順序，同時是題目列回指的鍵。 */
+    groupIndex: integer('group_index').notNull(),
+    /** 多檔上傳時的來源檔名，讓使用者對得回是哪一份。 */
+    sourceFilename: text('source_filename'),
+    chapterName: text('chapter_name'),
+    groupName: text('group_name').notNull(),
+    source: text('source'),
+    year: integer('year'),
+    notes: text('notes'),
+    /** 這個題組帶了幾段章節筆記。 */
+    noteCount: integer('note_count').notNull().default(0),
+
+    totalCount: integer('total_count').notNull().default(0),
+    validCount: integer('valid_count').notNull().default(0),
+    errorCount: integer('error_count').notNull().default(0),
+    warningCount: integer('warning_count').notNull().default(0),
+    committedCount: integer('committed_count').notNull().default(0),
+
+    /** commit 之後指向實際建立的題組。 */
+    resultingGroupId: uuid('resulting_group_id').references(() => questionGroups.id, {
+      onDelete: 'set null',
+    }),
+    ...timestamps,
+  },
+  (t) => [
+    unique('import_question_groups_batch_index_unique').on(t.batchId, t.groupIndex),
+    index('import_question_groups_batch_idx').on(t.batchId),
+  ],
+);
+
+/**
  * 匯入暫存題目。
  *
  * options 與 correct_answers 以 jsonb 儲存：此階段的資料尚未通過驗證，
@@ -86,6 +133,16 @@ export const importQuestions = pgTable(
     batchId: uuid('batch_id')
       .notNull()
       .references(() => importBatches.id, { onDelete: 'cascade' }),
+    /**
+     * 所屬題組。
+     *
+     * 可為空只是為了相容這個欄位出現之前的舊批次（那些都已經是終端狀態）。
+     * **新的批次一律有值**，commit 也只走有值的路徑——留一條 fallback
+     * 等於讓同一件事有兩種寫法，遲早分岔。
+     */
+    importGroupId: uuid('import_group_id').references(() => importQuestionGroups.id, {
+      onDelete: 'cascade',
+    }),
     rowIndex: integer('row_index').notNull(),
 
     externalId: text('external_id'),

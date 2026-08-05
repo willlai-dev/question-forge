@@ -97,6 +97,25 @@ function PreviewView({ batchId }: { batchId: string }) {
   const discardError = discard.error instanceof ApiRequestError ? discard.error : null;
   const data = batch.data;
 
+  /*
+   * 確認訊息要說實話。
+   *
+   * 有阻斷性錯誤的題組會整組跳過，組裡沒問題的題目也不會寫入——
+   * 直接報 validCount 會多算那些題，使用者按下去才發現數字對不上。
+   */
+  const committableGroups = (data?.groups ?? []).filter((group) => group.canCommit);
+  const skippedGroups = (data?.groups ?? []).filter(
+    (group) => !group.canCommit && group.resultingGroupId === null,
+  );
+  const commitConfirmMessage =
+    committableGroups.length > 0
+      ? `確定將 ${committableGroups.reduce((sum, g) => sum + g.validCount, 0)} 題` +
+        `（${committableGroups.length} 個題組）寫入正式題庫？` +
+        (skippedGroups.length > 0
+          ? `\n\n另有 ${skippedGroups.length} 個題組因為仍有錯誤而不會匯入，修正後可以再匯一次。`
+          : '')
+      : `確定將 ${data?.validCount ?? 0} 題寫入正式題庫？`;
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
@@ -107,6 +126,7 @@ function PreviewView({ batchId }: { batchId: string }) {
             {data?.errorCount ?? 0} · 警告 {data?.warningCount ?? 0}
             {data && data.reviewRequiredCount > 0 && ` · 需複核 ${data.reviewRequiredCount}`}
             {data && data.noteCount > 0 && ` · 章節筆記 ${data.noteCount} 段`}
+            {data && data.groups.length > 1 && ` · ${data.groups.length} 個題組`}
           </p>
           {/*
             筆記會直接影響 AI 解析的內容，而且是「筆記優先」——
@@ -182,7 +202,9 @@ function PreviewView({ batchId }: { batchId: string }) {
           <div className="flex flex-wrap items-center gap-3 border-t pt-4">
             <span className="text-sm">
               {data?.canCommit
-                ? '沒有阻斷性錯誤，可以寫入正式題庫。'
+                ? data.groups.some((g) => !g.canCommit && g.resultingGroupId === null)
+                  ? '沒有錯誤的題組可以先寫入，有錯誤的會被跳過，修正後可再匯入一次。'
+                  : '沒有阻斷性錯誤，可以寫入正式題庫。'
                 : '仍有題目存在錯誤，請先修正或排除。'}
             </span>
             <div className="ml-auto flex gap-2">
@@ -201,12 +223,54 @@ function PreviewView({ batchId }: { batchId: string }) {
               <Button
                 disabled={!data?.canCommit || commit.isPending}
                 onClick={() => {
-                  if (confirm(`確定將 ${data?.validCount} 題寫入正式題庫？`)) commit.mutate();
+                  if (confirm(commitConfirmMessage)) commit.mutate();
                 }}
               >
                 {commit.isPending ? '匯入中…' : '確認匯入'}
               </Button>
             </div>
+          </div>
+        </Card>
+      )}
+
+      {/*
+        多題組時逐組列出。每組各自判斷能不能寫入——使用者選的是
+        「沒錯的先匯、有錯的擋下」，因此哪一組卡住必須一眼看得出來。
+        單一題組時不顯示，避免對原本的流程增加雜訊。
+      */}
+      {data && data.groups.length > 1 && (
+        <Card className="space-y-2">
+          <h2 className="font-medium">題組（{data.groups.length}）</h2>
+          <div className="space-y-1.5">
+            {data.groups.map((group) => (
+              <div
+                key={group.id}
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border px-3 py-2 text-sm"
+              >
+                <span className="font-medium">
+                  {group.chapterName ? `${group.chapterName} / ` : ''}
+                  {group.groupName}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {group.totalCount} 題
+                  {group.errorCount > 0 && ` · 錯誤 ${group.errorCount}`}
+                  {group.warningCount > 0 && ` · 警告 ${group.warningCount}`}
+                  {group.noteCount > 0 && ` · 筆記 ${group.noteCount}`}
+                  {group.sourceFilename ? ` · ${group.sourceFilename}` : ''}
+                </span>
+                <span className="ml-auto text-xs">
+                  {group.resultingGroupId !== null ? (
+                    <span className="text-emerald-700 dark:text-emerald-400">
+                      已匯入 {group.committedCount} 題
+                    </span>
+                  ) : group.canCommit ? (
+                    <span className="text-muted-foreground">可匯入</span>
+                  ) : (
+                    <span className="text-destructive">有錯誤，這組會被跳過</span>
+                  )}
+                </span>
+              </div>
+            ))}
           </div>
         </Card>
       )}

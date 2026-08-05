@@ -1,6 +1,6 @@
 # PDF 題庫整理 Prompt（QUESTION_IMPORT_PROMPT）
 
-> 版本：`import-prompt@1.1.0`
+> 版本：`import-prompt@1.2.0`
 > 用途：交給具備 PDF 閱讀能力的外部大型語言模型（GPT、Claude 等），把 PDF 題庫轉成本系統可匯入的 JSON。
 > 系統內可由 `GET /imports/prompt` 取得同一份文字，前端「JSON 匯入」頁面提供一鍵複製。
 
@@ -13,6 +13,7 @@
 3. 附上 PDF 檔案。
 4. 取得輸出後存成 `.json` 檔。
 5. 回到本系統 `/imports/new` 上傳，進入預覽與驗證流程。
+   **一次可選多個 JSON 檔**（同一科目、不同章節），會合併成同一個匯入批次。
 
 > 外部模型的輸出**一律視為未驗證資料**。本系統會完整重跑一次驗證，錯誤不會寫入正式題庫。
 > 因此就算外部模型出錯，也不會污染題庫——只會在預覽頁列出問題等你處理。
@@ -40,72 +41,79 @@
 10. 只處理單選題與複選題。填充題、簡答題、申論題、計算題請整個略過，不要嘗試轉換。
 11. 若 PDF 中除了題目之外還有**講義、重點整理、條文摘錄**等筆記性內容，一併擷取到 notes。
     同樣是原文照錄，**不得自行撰寫、改寫或補充**。PDF 裡沒有筆記就給空陣列。
+12. 若這份 PDF **含有多個章節**，每個章節輸出成 questionGroups 裡的一個題組，
+    各自帶自己的 chapter、notes 與 questions。不要把不同章節的題目混在同一組。
+    只有一個章節時，questionGroups 就只放一個題組——**不要改用舊格式**。
 
 # 輸出格式
 
-輸出一個 JSON 物件，結構如下：
+輸出一個 JSON 物件，結構如下。**一個 subject，底下放一個或多個題組**：
 
 {
-  "schemaVersion": "1.1.0",
+  "schemaVersion": "1.2.0",
   "subject": {
     "name": "科目名稱",
     "code": null,
     "description": null
-  },
-  "chapter": {
-    "name": "章節名稱",
-    "description": null,
-    "sortOrder": null
-  },
-  "questionGroup": {
-    "name": "題組名稱，例如「112年地方特考三等 行政法」",
-    "description": null,
-    "source": "來源，例如「112年地方特考」",
-    "year": 2023,
-    "notes": null
   },
   "sourceDocument": {
     "filename": "原始 PDF 檔名",
     "title": null,
     "totalPages": 18
   },
-  "notes": [
+  "questionGroups": [
     {
-      "noteId": "N1",
-      "title": "小節標題（沒有就填 null）",
-      "content": "這一段筆記的原文。一段一個主題。",
-      "sourcePage": 3,
-      "keywords": ["主題詞1", "主題詞2"]
-    }
-  ],
-  "questions": [
-    {
-      "externalId": "此題的唯一識別，建議格式：<來源代號>-Q<題號>",
-      "questionNumber": 12,
-      "type": "single_choice",
-      "stem": "完整題幹原文",
-      "options": [
-        { "key": "A", "text": "選項 A 的完整原文" },
-        { "key": "B", "text": "選項 B 的完整原文" },
-        { "key": "C", "text": "選項 C 的完整原文" },
-        { "key": "D", "text": "選項 D 的完整原文" }
+      "name": "題組名稱，例如「第三章 行政行為 練習題」",
+      "description": null,
+      "source": "來源，例如「112年地方特考」",
+      "year": 2023,
+      "chapter": {
+        "name": "章節名稱",
+        "description": null,
+        "sortOrder": null
+      },
+      "notes": [
+        {
+          "noteId": "N1",
+          "title": "小節標題（沒有就填 null）",
+          "content": "這一段筆記的原文。一段一個主題。",
+          "sourcePage": 3,
+          "keywords": ["主題詞1", "主題詞2"]
+        }
       ],
-      "correctAnswers": ["B"],
-      "explanation": null,
-      "sourcePage": 5,
-      "sourceReference": "第三章 行政行為",
-      "reviewRequired": false,
-      "reviewReason": null,
-      "knowledgeHints": ["此題考查的知識點（選填，最多 3 個）"],
-      "relatedNoteIds": ["N1"]
+      "questions": [
+        {
+          "externalId": "此題的唯一識別，建議格式：<來源代號>-<章節>-Q<題號>",
+          "questionNumber": 12,
+          "type": "single_choice",
+          "stem": "完整題幹原文",
+          "options": [
+            { "key": "A", "text": "選項 A 的完整原文" },
+            { "key": "B", "text": "選項 B 的完整原文" },
+            { "key": "C", "text": "選項 C 的完整原文" },
+            { "key": "D", "text": "選項 D 的完整原文" }
+          ],
+          "correctAnswers": ["B"],
+          "explanation": null,
+          "sourcePage": 5,
+          "sourceReference": "第三章 行政行為",
+          "reviewRequired": false,
+          "reviewReason": null,
+          "knowledgeHints": ["此題考查的知識點（選填，最多 3 個）"],
+          "relatedNoteIds": ["N1"]
+        }
+      ]
     }
   ]
 }
 
 # 欄位規則
 
-- schemaVersion：固定填 "1.1.0"。
-- chapter：PDF 若沒有章節結構，整個填 null。
+- schemaVersion：固定填 "1.2.0"。
+- questionGroups：**至少一個題組，最多 50 個**。一個章節一個題組。
+- chapter：該題組所屬章節。PDF 若沒有章節結構，整個填 null。
+- notes（題組層）：章節筆記陣列，只屬於這個題組。沒有就給空陣列。
+  若只是想寫一句題組備註，直接填字串即可。
 - type：只能是 "single_choice" 或 "multiple_choice"。
   題目若出現「複選」「多選」「選出所有」等字樣，或答案有多個，就是 multiple_choice。
 - correctAnswers：陣列，內容是選項的 key。
@@ -121,15 +129,17 @@
   - 題目內容明顯不完整（例如缺圖、缺附表而無法作答）
   - 你對正確答案沒有把握
 - reviewReason：reviewRequired 為 true 時必填，簡短說明原因；否則填 null。
-- externalId：同一份輸出裡不得重複。
-- questionNumber：同一份輸出裡不得重複；若 PDF 分節重新編號，請在 externalId 中加入節次區分。
+- externalId：**整份輸出裡不得重複**，跨題組也一樣。
+  各章題號常常都從 1 開始，所以請把章節帶進 externalId，例如 `112地特-第三章-Q1`。
+- questionNumber：**同一個題組內**不得重複。
+  不同題組可以各自從 1 開始——第三章第 1 題與第四章第 1 題並存是正常的。
 
 ## notes（章節筆記）
 
-PDF 裡除了題目以外的講義、重點整理、條文摘錄都放這裡。匯入後它會成為這個題庫的
+PDF 裡除了題目以外的講義、重點整理、條文摘錄都放這裡，**放在所屬題組底下**。匯入後它會成為這個題庫的
 本地資料源，AI 產生解析時會優先採用——所以**照錄原文**特別重要，寫錯會被當成正解。
 
-- noteId：N1、N2… 同一份輸出裡不得重複。
+- noteId：N1、N2… **同一個題組內**不得重複。
 - content：原文照錄。**一段一個主題**，不要把整章塞成一筆——
   系統是以「整段」為單位取用的，一大坨會讓不相關的內容一起被送進模型。
   單筆上限 20000 字，超過請拆開。
@@ -139,6 +149,7 @@ PDF 裡除了題目以外的講義、重點整理、條文摘錄都放這裡。�
 - PDF 中沒有筆記性內容時，notes 填空陣列 `[]`。**不要為了填滿而自己寫。**
 
 - relatedNoteIds：某一題明確對應到哪幾段筆記就填（例如 ["N1"]）。
+  **只能指向同一個題組裡的 noteId**，不可以跨題組引用。
   填了的話那幾段一定會被採用；不確定就不要填，系統會自己用關鍵字比對。
   **不可以填不存在的 noteId**——那會讓該題驗證失敗。
 

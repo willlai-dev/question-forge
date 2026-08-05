@@ -59,6 +59,28 @@ async function upload(path, filename, content, csrf) {
   return { status: res.status, body: json };
 }
 
+/** 多檔上傳：同一個 `file` 欄位重複 append，對應後端的 FilesInterceptor。 */
+async function uploadMany(path, files, csrf) {
+  const form = new FormData();
+  for (const f of files) {
+    form.append(
+      'file',
+      new Blob([JSON.stringify(f.content)], { type: 'application/json' }),
+      f.filename,
+    );
+  }
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { Cookie: cookieHeader(), 'X-CSRF-Token': csrf },
+    body: form,
+  });
+  absorb(res);
+  const text = await res.text();
+  let json;
+  try { json = text ? JSON.parse(text) : undefined; } catch { json = text; }
+  return { status: res.status, body: json };
+}
+
 function check(label, condition, detail = '') {
   if (condition) { pass += 1; console.log(`  ✔ ${label}`); }
   else { fail += 1; console.log(`  ✘ ${label} ${detail}`); }
@@ -455,6 +477,247 @@ const run = async () => {
   check('丟棄後不可再 commit', commitDiscarded.status >= 400,
     `status=${commitDiscarded.status}`);
 
+
+  // ==================================================================
+  // 多題組匯入：一次匯入同一科目、不同章節的多份題庫。
+  // ==================================================================
+  console.log('\n=== 多題組：多檔上傳合併成同一批 ===');
+
+  const chapterFile = (chapter, questions) => ({
+    schemaVersion: '1.0.0',
+    subject: { name: `多題組測試科目-${stamp}` },
+    chapter: { name: `${chapter}-${stamp}` },
+    questionGroup: { name: `${chapter}題本-${stamp}`, source: '單元測試', year: 2026 },
+    questions,
+  });
+
+  // 兩個檔案都用題號 1、2：這正是使用者的真實情境（各章自己從第 1 題開始）。
+  const multi = await uploadMany('/imports', [
+    { filename: 'ch1.json', content: chapterFile('多組第一章', [
+      validQuestion(1, { externalId: `E2E-${stamp}-MG-A1`, questionNumber: 1 }),
+      validQuestion(2, { externalId: `E2E-${stamp}-MG-A2`, questionNumber: 2 }),
+    ]) },
+    { filename: 'ch2.json', content: chapterFile('多組第二章', [
+      validQuestion(1, { externalId: `E2E-${stamp}-MG-B1`, questionNumber: 1 }),
+    ]) },
+  ], csrf);
+
+  check('多檔上傳建立單一批次', multi.status === 201, `status=${multi.status} ${JSON.stringify(multi.body).slice(0, 200)}`);
+  check('批次含兩個題組', multi.body?.groups?.length === 2, `groups=${multi.body?.groups?.length}`);
+  check('題目數合計為 3', multi.body?.totalCount === 3, `total=${multi.body?.totalCount}`);
+  check('**跨檔重複題號不算錯誤**（題號只在題組內唯一）', multi.body?.errorCount === 0,
+    `errorCount=${multi.body?.errorCount} ${JSON.stringify(multi.body?.groups)}`);
+  check('題組記得自己來自哪個檔案',
+    JSON.stringify(multi.body?.groups?.map((g) => g.sourceFilename)) === '["ch1.json","ch2.json"]',
+    JSON.stringify(multi.body?.groups?.map((g) => g.sourceFilename)));
+
+  const multiRows = await call('GET', `/imports/${multi.body.id}/questions`);
+  const groupIds = new Set((multiRows.body ?? []).map((r) => r.importGroupId));
+  check('**每一列都掛在題組上**（沒有孤兒列）', groupIds.size === 2 && !groupIds.has(null),
+    `distinct=${groupIds.size}`);
+
+  const multiCommit = await call('POST', `/imports/${multi.body.id}/commit`, {}, H());
+  check('多題組可以 commit', multiCommit.status === 200 || multiCommit.status === 201,
+    `status=${multiCommit.status} ${JSON.stringify(multiCommit.body).slice(0, 200)}`);
+  check('commit 結果逐題組回報', multiCommit.body?.groups?.length === 2);
+  check('三題全數寫入', multiCommit.body?.committedCount === 3,
+    `committed=${multiCommit.body?.committedCount}`);
+
+  // 每個題組各自建立一個 question_groups，且落在自己的章節。
+  const createdGroupIds = multiCommit.body?.groups?.map((g) => g.questionGroupId) ?? [];
+  check('**兩個題組各自建立獨立的題組**', new Set(createdGroupIds).size === 2,
+    JSON.stringify(createdGroupIds));
+
+  const mgSubjectId = multiCommit.body?.subjectId;
+  check('commit 回報科目', Boolean(mgSubjectId));
+  const listChapters = async () => {
+    const res = await call('GET', `/subjects/${mgSubjectId}/chapters`);
+    return res.body?.items ?? res.body ?? [];
+  };
+  const chapters = await listChapters();
+  const ch1 = chapters.find((c) => c.name === `多組第一章-${stamp}`);
+  const ch2 = chapters.find((c) => c.name === `多組第二章-${stamp}`);
+  check('**兩個章節都自動建立**（同科目、不同章節）', Boolean(ch1) && Boolean(ch2));
+  if (ch1 && ch2) {
+    const inCh1 = await call('GET', `/questions?chapterId=${ch1.id}&pageSize=50`);
+    const inCh2 = await call('GET', `/questions?chapterId=${ch2.id}&pageSize=50`);
+    check('第一章拿到 2 題', inCh1.body?.pagination?.total === 2,
+      `total=${inCh1.body?.pagination?.total}`);
+    check('第二章拿到 1 題', inCh2.body?.pagination?.total === 1,
+      `total=${inCh2.body?.pagination?.total}`);
+    check('**同科目**：兩章屬於同一科目', ch1.subjectId === ch2.subjectId);
+  }
+
+
+  console.log('\n=== 多題組：指定既有題組 ===');
+  // 匯進既有題組是舊有能力（章節筆記靠它更新），逐題組匯入不可以把它弄丟。
+  const intoExisting = await upload('/imports', 'append.json',
+    chapterFile('多組第一章', [
+      validQuestion(9, { externalId: `E2E-${stamp}-MG-APPEND`, questionNumber: 9 }),
+    ]), csrf);
+  const appendCommit = await call('POST', `/imports/${intoExisting.body.id}/commit`,
+    { targetGroupId: createdGroupIds[0] }, H());
+  check('可以匯入既有題組', appendCommit.status === 200 || appendCommit.status === 201,
+    `status=${appendCommit.status} ${JSON.stringify(appendCommit.body).slice(0, 200)}`);
+  check('**targetGroupId 真的被採用**（沒有另外開一個新題組）',
+    appendCommit.body?.questionGroupId === createdGroupIds[0],
+    `${appendCommit.body?.questionGroupId} vs ${createdGroupIds[0]}`);
+  check('既有題組的題數增加', appendCommit.body?.committedCount === 1);
+
+  const cannotMerge = await upload('/imports', 'merge.json', {
+    schemaVersion: '1.2.0',
+    subject: { name: `多題組測試科目-${stamp}` },
+    questionGroups: [
+      { name: '併組甲', chapter: { name: `併組甲-${stamp}` },
+        questions: [validQuestion(1, { externalId: `E2E-${stamp}-MERGE-A` })] },
+      { name: '併組乙', chapter: { name: `併組乙-${stamp}` },
+        questions: [validQuestion(1, { externalId: `E2E-${stamp}-MERGE-B` })] },
+    ],
+  }, csrf);
+  const mergeCommit = await call('POST', `/imports/${cannotMerge.body.id}/commit`,
+    { targetGroupId: createdGroupIds[0] }, H());
+  check('**多個題組不可以全部併進同一個既有題組**（章節會被默默丟掉）',
+    mergeCommit.status >= 400, `status=${mergeCommit.status}`);
+
+  console.log('\n=== 多題組：科目不一致要擋下 ===');
+  const subjectMismatch = await uploadMany('/imports', [
+    { filename: 'a.json', content: chapterFile('混科第一章', [
+      validQuestion(1, { externalId: `E2E-${stamp}-MX-A` })]) },
+    { filename: 'b.json', content: {
+      ...chapterFile('混科第二章', [validQuestion(1, { externalId: `E2E-${stamp}-MX-B` })]),
+      subject: { name: '另一個完全不同的科目' },
+    } },
+  ], csrf);
+  check('**各檔科目不一致 → 批次標為 failed**', subjectMismatch.body?.status === 'failed',
+    `status=${subjectMismatch.body?.status}`);
+  check('錯誤碼為 SUBJECT_MISMATCH_ACROSS_FILES',
+    (subjectMismatch.body?.fileIssues ?? []).some((i) => i.code === 'SUBJECT_MISMATCH_ACROSS_FILES'),
+    JSON.stringify(subjectMismatch.body?.fileIssues));
+  const mismatchCommit = await call('POST', `/imports/${subjectMismatch.body.id}/commit`, {}, H());
+  check('**科目不一致的批次不可 commit**（否則不知道要匯到哪個科目）',
+    mismatchCommit.status >= 400, `status=${mismatchCommit.status}`);
+
+  console.log('\n=== 多題組：單一檔案內含多個題組（1.2.0）===');
+  const nested = await upload('/imports', 'nested.json', {
+    schemaVersion: '1.2.0',
+    subject: { name: `多題組測試科目-${stamp}` },
+    questionGroups: [
+      {
+        name: `巢狀第一組-${stamp}`,
+        chapter: { name: `巢狀第一章-${stamp}` },
+        notes: [{ noteId: 'N1', title: '第一章重點', content: '行政處分須對外直接發生法律效果。' }],
+        questions: [validQuestion(1, {
+          externalId: `E2E-${stamp}-NS-A1`, questionNumber: 1, relatedNoteIds: ['N1'] })],
+      },
+      {
+        name: `巢狀第二組-${stamp}`,
+        chapter: { name: `巢狀第二章-${stamp}` },
+        questions: [validQuestion(1, { externalId: `E2E-${stamp}-NS-B1`, questionNumber: 1 })],
+      },
+    ],
+  }, csrf);
+  check('1.2.0 單檔多題組上傳成功', nested.status === 201,
+    `status=${nested.status} ${JSON.stringify(nested.body).slice(0, 200)}`);
+  check('拆出兩個題組', nested.body?.groups?.length === 2, `groups=${nested.body?.groups?.length}`);
+  check('無錯誤', nested.body?.errorCount === 0, `errorCount=${nested.body?.errorCount}`);
+  check('**筆記掛在自己的題組上**',
+    nested.body?.groups?.[0]?.noteCount === 1 && nested.body?.groups?.[1]?.noteCount === 0,
+    JSON.stringify(nested.body?.groups?.map((g) => g.noteCount)));
+
+  const nestedCommit = await call('POST', `/imports/${nested.body.id}/commit`, {}, H());
+  check('1.2.0 可以 commit', nestedCommit.status === 200 || nestedCommit.status === 201,
+    `status=${nestedCommit.status}`);
+  check('兩題都寫入', nestedCommit.body?.committedCount === 2,
+    `committed=${nestedCommit.body?.committedCount}`);
+
+  console.log('\n=== 多題組：沒錯的先匯，有錯的擋下 ===');
+  // 第二組缺正確答案 → 該組有阻斷性錯誤；第一組完好。
+  const partial = await uploadMany('/imports', [
+    { filename: 'good.json', content: chapterFile('部分第一章', [
+      validQuestion(1, { externalId: `E2E-${stamp}-PT-A1`, questionNumber: 1 }),
+      validQuestion(2, { externalId: `E2E-${stamp}-PT-A2`, questionNumber: 2 }),
+    ]) },
+    { filename: 'bad.json', content: chapterFile('部分第二章', [
+      validQuestion(1, { externalId: `E2E-${stamp}-PT-B1`, questionNumber: 1, correctAnswers: [] }),
+    ]) },
+  ], csrf);
+  check('部分有錯的批次仍可建立', partial.status === 201, `status=${partial.status}`);
+  check('偵測到 1 筆錯誤', partial.body?.errorCount === 1, `errorCount=${partial.body?.errorCount}`);
+  check('**好的題組 canCommit，壞的不行**',
+    partial.body?.groups?.[0]?.canCommit === true && partial.body?.groups?.[1]?.canCommit === false,
+    JSON.stringify(partial.body?.groups?.map((g) => g.canCommit)));
+
+  const partialCommit = await call('POST', `/imports/${partial.body.id}/commit`, {}, H());
+  check('**有錯也能 commit**（沒錯的先匯）',
+    partialCommit.status === 200 || partialCommit.status === 201,
+    `status=${partialCommit.status} ${JSON.stringify(partialCommit.body).slice(0, 200)}`);
+  check('只寫入好的那組的 2 題', partialCommit.body?.committedCount === 2,
+    `committed=${partialCommit.body?.committedCount}`);
+  check('**壞的題組被標為 skipped**', partialCommit.body?.groups?.[1]?.skipped === true,
+    JSON.stringify(partialCommit.body?.groups));
+  check('逐組題數加總等於整批題數',
+    (partialCommit.body?.groups ?? []).reduce((sum, g) => sum + g.committedCount, 0) ===
+      partialCommit.body?.committedCount);
+
+  const partialAfter = await call('GET', `/imports/${partial.body.id}`);
+  check('**批次維持 partially_valid**（否則剩下那組再也匯不進來）',
+    partialAfter.body?.status === 'partially_valid', `status=${partialAfter.body?.status}`);
+
+  const badChapter = (await listChapters()).find((c) => c.name === `部分第二章-${stamp}`);
+  check('**被擋下的題組完全沒有落地**（連空題組都不該建立）', badChapter === undefined,
+    `chapter=${badChapter?.id}`);
+
+  console.log('\n=== 多題組：修好之後補匯剩下的題組 ===');
+  const partialRows = await call('GET', `/imports/${partial.body.id}/questions`);
+  const brokenRow = (partialRows.body ?? []).find((r) => r.externalId === `E2E-${stamp}-PT-B1`);
+  check('找得到出錯的那一列', Boolean(brokenRow));
+
+  if (brokenRow) {
+    // 修正介面吃的是帶 isCorrect 的完整 options，不是 correctAnswers。
+    const fixed = await call('PATCH',
+      `/imports/${partial.body.id}/questions/${brokenRow.id}`,
+      {
+        options: [
+          { key: 'A', text: '行政指導', isCorrect: false },
+          { key: 'B', text: '拆除命令', isCorrect: true },
+          { key: 'C', text: '行政計畫', isCorrect: false },
+          { key: 'D', text: '行政契約', isCorrect: false },
+        ],
+      }, H());
+    check('可以修正出錯的列', fixed.status === 200, `status=${fixed.status}`);
+
+    const revalidated = await call('POST', `/imports/${partial.body.id}/revalidate`, {}, H());
+    check('重新驗證後沒有錯誤', revalidated.body?.errorCount === 0,
+      `errorCount=${revalidated.body?.errorCount}`);
+    check('**重新驗證不會把題組打散**', revalidated.body?.groups?.length === 2,
+      `groups=${revalidated.body?.groups?.length}`);
+
+    const recommit = await call('POST', `/imports/${partial.body.id}/commit`, {}, H());
+    check('可以補匯剩下的題組', recommit.status === 200 || recommit.status === 201,
+      `status=${recommit.status} ${JSON.stringify(recommit.body).slice(0, 200)}`);
+    check('這次只寫入剩下的 1 題', recommit.body?.committedCount === 1,
+      `committed=${recommit.body?.committedCount}`);
+    check('**已匯過的題組不會重複寫入**',
+      recommit.body?.groups?.[0]?.alreadyCommitted === true &&
+        recommit.body?.groups?.[0]?.committedCount === 0,
+      JSON.stringify(recommit.body?.groups));
+    check('**逐組題數加總等於整批題數**（committedCount 是本次而非累計）',
+      (recommit.body?.groups ?? []).reduce((sum, g) => sum + g.committedCount, 0) ===
+        recommit.body?.committedCount,
+      JSON.stringify(recommit.body?.groups));
+
+    const finalBatch = await call('GET', `/imports/${partial.body.id}`);
+    check('全部匯完後批次為 committed', finalBatch.body?.status === 'committed',
+      `status=${finalBatch.body?.status}`);
+
+    const fixedChapter = (await listChapters()).find((c) => c.name === `部分第二章-${stamp}`);
+    check('修好的題組這時才落地', Boolean(fixedChapter));
+    if (fixedChapter) {
+      const inFixed = await call('GET', `/questions?chapterId=${fixedChapter.id}&pageSize=50`);
+      check('補匯的那題確實在庫裡', inFixed.body?.pagination?.total === 1,
+        `total=${inFixed.body?.pagination?.total}`);
+    }
+  }
 
   console.log(`\n===== 通過 ${pass} 項，失敗 ${fail} 項 =====`);
   process.exit(fail === 0 ? 0 : 1);

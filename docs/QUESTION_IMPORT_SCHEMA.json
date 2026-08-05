@@ -1,17 +1,31 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://question-bank-analysis.local/schemas/question-import/1.1.0",
-  "title": "題庫匯入格式 v1.1.0",
+  "$id": "https://question-bank-analysis.local/schemas/question-import/1.2.0",
+  "title": "題庫匯入格式 v1.2.0",
   "description": "由外部 LLM 從 PDF 整理後產生、供本系統匯入的選擇題題庫格式。第一版只支援單選題與複選題。",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "subject", "questionGroup", "questions"],
+  "required": ["schemaVersion", "subject"],
+
+  "oneOf": [
+    {
+      "title": "多題組（1.2.0）",
+      "description": "一個檔案含多個題組，適合一次整理整本、每章一組。",
+      "required": ["questionGroups"],
+      "not": { "anyOf": [{ "required": ["questions"] }, { "required": ["questionGroup"] }] }
+    },
+    {
+      "title": "單題組（1.0.0 / 1.1.0，仍然支援）",
+      "required": ["questionGroup", "questions"],
+      "not": { "required": ["questionGroups"] }
+    }
+  ],
 
   "properties": {
     "schemaVersion": {
       "type": "string",
-      "description": "格式版本。1.1.0 新增 notes（章節筆記）與題目的 relatedNoteIds；1.0.0 仍然接受。",
-      "enum": ["1.0.0", "1.1.0"]
+      "description": "格式版本。1.2.0 新增 questionGroups（一個檔案多個題組）；1.1.0 新增 notes（章節筆記）與題目的 relatedNoteIds；舊版本仍然接受。",
+      "enum": ["1.0.0", "1.1.0", "1.2.0"]
     },
 
     "subject": {
@@ -28,7 +42,7 @@
 
     "chapter": {
       "type": ["object", "null"],
-      "description": "章節。可為 null —— 允許題組直接隸屬科目。",
+      "description": "章節。可為 null —— 允許題組直接隸屬科目。**單題組格式專用**；使用 questionGroups 時改由各題組自帶 chapter。",
       "additionalProperties": false,
       "required": ["name"],
       "properties": {
@@ -40,7 +54,7 @@
 
     "questionGroup": {
       "type": "object",
-      "description": "題組。",
+      "description": "題組。**單題組格式專用**；使用 questionGroups 時不得出現。",
       "additionalProperties": false,
       "required": ["name"],
       "properties": {
@@ -101,9 +115,17 @@
       }
     },
 
+    "questionGroups": {
+      "type": "array",
+      "description": "多題組（1.2.0 起）。一個檔案放多個題組，適合一次整理整本教材、每章一組。整份檔案共用同一個 subject。與 questionGroup／questions／chapter／notes 互斥。",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": { "$ref": "#/$defs/questionGroupEntry" }
+    },
+
     "questions": {
       "type": "array",
-      "description": "題目陣列。不得包含 PDF 中不存在的題目。",
+      "description": "題目陣列。不得包含 PDF 中不存在的題目。**單題組格式專用**；使用 questionGroups 時不得出現。",
       "minItems": 1,
       "maxItems": 2000,
       "items": { "$ref": "#/$defs/question" }
@@ -111,6 +133,44 @@
   },
 
   "$defs": {
+    "questionGroupEntry": {
+      "type": "object",
+      "description": "questionGroups 的成員：一個題組，連同它自己的章節、章節筆記與題目。",
+      "additionalProperties": false,
+      "required": ["name", "questions"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "description": { "type": ["string", "null"], "maxLength": 2000 },
+        "source": { "type": ["string", "null"], "maxLength": 200 },
+        "year": { "type": ["integer", "null"], "minimum": 1900, "maximum": 2200 },
+        "chapter": {
+          "type": ["object", "null"],
+          "description": "此題組所屬章節。整份檔案同科目，章節逐題組決定。",
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "description": { "type": ["string", "null"], "maxLength": 1000 },
+            "sortOrder": { "type": ["integer", "null"], "minimum": 0 }
+          }
+        },
+        "notes": {
+          "description": "字串＝此題組的備註；陣列＝此題組的章節筆記（結構同根層 notes）。舊格式這兩者分別是 questionGroup.notes 與根層 notes，在此合併於同一個鍵，以型別分流。",
+          "oneOf": [
+            { "type": ["string", "null"], "maxLength": 2000 },
+            { "$ref": "#/properties/notes" }
+          ]
+        },
+        "questions": {
+          "type": "array",
+          "description": "此題組的題目。**題號只需在題組內唯一**——第一章與第二章都可以有第 1 題。externalId 則必須整批唯一。",
+          "minItems": 1,
+          "maxItems": 2000,
+          "items": { "$ref": "#/$defs/question" }
+        }
+      }
+    },
+
     "option": {
       "type": "object",
       "additionalProperties": false,
@@ -309,6 +369,67 @@
           "reviewRequired": true,
           "reviewReason": "PDF 答案欄位模糊，D 選項是否為答案無法確認。",
           "knowledgeHints": ["行政處分之附款"]
+        }
+      ]
+    },
+    {
+      "schemaVersion": "1.2.0",
+      "subject": { "name": "行政法" },
+      "questionGroups": [
+        {
+          "name": "第三章 行政行為 練習題",
+          "chapter": { "name": "第三章 行政行為" },
+          "source": "112年地方特考三等",
+          "year": 2023,
+          "notes": [
+            {
+              "noteId": "N1",
+              "title": "行政處分的要件",
+              "content": "行政處分須為行政機關就公法上具體事件所為之決定，且對外直接發生法律效果。",
+              "sourcePage": 12,
+              "keywords": ["行政處分", "法律效果"]
+            }
+          ],
+          "questions": [
+            {
+              "externalId": "112-地特三等-行政法-01",
+              "questionNumber": 1,
+              "type": "single_choice",
+              "stem": "下列何者屬於行政處分？",
+              "options": [
+                { "key": "A", "text": "行政指導" },
+                { "key": "B", "text": "違建拆除命令" },
+                { "key": "C", "text": "行政計畫" },
+                { "key": "D", "text": "行政契約" }
+              ],
+              "correctAnswers": ["B"],
+              "explanation": null,
+              "sourcePage": 14,
+              "relatedNoteIds": ["N1"]
+            }
+          ]
+        },
+        {
+          "name": "第四章 行政程序 練習題",
+          "chapter": { "name": "第四章 行政程序" },
+          "notes": "本章題目較少，取自講義末的自我測驗。",
+          "questions": [
+            {
+              "externalId": "112-地特三等-行政法-31",
+              "questionNumber": 1,
+              "type": "single_choice",
+              "stem": "行政程序法所稱之當事人，不包括下列何者？",
+              "options": [
+                { "key": "A", "text": "申請人" },
+                { "key": "B", "text": "行政機關之承辦人員" },
+                { "key": "C", "text": "利害關係人" },
+                { "key": "D", "text": "相對人" }
+              ],
+              "correctAnswers": ["B"],
+              "explanation": null,
+              "sourcePage": 26
+            }
+          ]
         }
       ]
     }
