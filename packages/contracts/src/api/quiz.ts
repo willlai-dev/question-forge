@@ -191,6 +191,13 @@ export const quizOutlineItemSchema = z.object({
   isProvisional: z.boolean(),
   /** 自己標為重點。導覽列據此標出來，才找得回剛才標的那幾題。 */
   isFlagged: z.boolean(),
+  /**
+   * 這一題的 AI 解析狀態，供導覽列標示。
+   *
+   * 優先序 running > completed > failed > none：已經有解析、但最近一次重跑失敗時，
+   * 顯示 completed 才符合使用者的認知——那份解析確實還在，看得到。
+   */
+  analysisStatus: z.enum(['none', 'running', 'completed', 'failed']),
 });
 export type QuizOutlineItem = z.infer<typeof quizOutlineItemSchema>;
 

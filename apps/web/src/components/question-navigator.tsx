@@ -152,6 +152,22 @@ export function QuestionNavigator({
                         ★
                       </span>
                     )}
+                    {/*
+                      AI 解析狀態用底部色條表示。
+                      不能再用外框：外框已經被「目前這一題」佔用（ring），
+                      兩個都畫外框會分不出哪個是哪個。
+                    */}
+                    {item.analysisStatus !== 'none' && (
+                      <span
+                        className={cn(
+                          'absolute inset-x-1 bottom-0.5 h-0.5 rounded-full',
+                          item.analysisStatus === 'running' && 'animate-pulse bg-sky-500',
+                          item.analysisStatus === 'completed' && 'bg-sky-500',
+                          item.analysisStatus === 'failed' && 'bg-destructive',
+                        )}
+                        title={ANALYSIS_LABEL[item.analysisStatus]}
+                      />
+                    )}
                     {item.isProvisional && (
                       <span
                         className="absolute right-0.5 top-0.5 text-[10px] leading-none text-amber-600"
@@ -176,6 +192,11 @@ export function QuestionNavigator({
                       {preview.type === 'multiple_choice' && ' · 複選'}
                     </span>
                     <p className="mt-0.5 line-clamp-2 leading-relaxed">{preview.stemPreview}…</p>
+                    {preview.analysisStatus !== 'none' && (
+                      <p className="mt-0.5 text-muted-foreground">
+                        {ANALYSIS_LABEL[preview.analysisStatus]}
+                      </p>
+                    )}
                   </>
                 ) : (
                   <span className="text-muted-foreground">滑過題號可預覽題幹。</span>
@@ -191,6 +212,14 @@ export function QuestionNavigator({
                   <span className="text-amber-500">★</span>
                   重點
                 </span>
+                <span className="flex items-center gap-1">
+                  <span className="inline-block h-0.5 w-3 animate-pulse rounded-full bg-sky-500" />
+                  分析中
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="inline-block h-0.5 w-3 rounded-full bg-sky-500" />
+                  已分析
+                </span>
               </div>
             </>
           )}
@@ -199,6 +228,13 @@ export function QuestionNavigator({
     </div>
   );
 }
+
+const ANALYSIS_LABEL: Record<QuizOutlineItem['analysisStatus'], string> = {
+  none: '尚未分析',
+  running: 'AI 分析中',
+  completed: '已有 AI 解析',
+  failed: 'AI 分析失敗',
+};
 
 /**
  * 題號的配色。

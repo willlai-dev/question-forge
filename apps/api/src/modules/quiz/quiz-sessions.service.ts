@@ -542,6 +542,22 @@ export class QuizSessionsService {
         isCorrect: schema.userAnswers.isCorrect,
         isProvisional: schema.userAnswers.isProvisional,
         isFlagged: schema.questionMarks.isFlagged,
+        /*
+         * AI 解析狀態。用相關子查詢而不是 join：ai_jobs 一題可能有多筆，
+         * join 會讓題目列數暴增，而這裡只需要「有沒有」。
+         * 一律寫死資料表名稱——drizzle 會把 ${schema.x.y} 算繪成未限定欄位，
+         * 在子查詢中會被解析成子查詢自己那張表的欄位（見 docs/ARCHITECTURE.md）。
+         */
+        analysisRunning: sql<boolean>`exists (
+          select 1 from ai_jobs j
+          where j.question_id = questions.id
+            and j.status in ('pending', 'active', 'retrying'))`,
+        analysisDone: sql<boolean>`exists (
+          select 1 from question_ai_enrichments e
+          where e.question_id = questions.id and e.is_current = true)`,
+        analysisFailed: sql<boolean>`exists (
+          select 1 from ai_jobs j
+          where j.question_id = questions.id and j.status = 'failed')`,
       })
       .from(schema.quizSessionQuestions)
       .innerJoin(schema.questions, eq(schema.questions.id, schema.quizSessionQuestions.questionId))
@@ -584,6 +600,13 @@ export class QuizSessionsService {
           isCorrect: this.canReveal(session, hasAnswer) ? (row.isCorrect ?? null) : null,
           isProvisional: row.isProvisional ?? false,
           isFlagged: row.isFlagged ?? false,
+          analysisStatus: row.analysisRunning
+            ? ('running' as const)
+            : row.analysisDone
+              ? ('completed' as const)
+              : row.analysisFailed
+                ? ('failed' as const)
+                : ('none' as const),
         };
       }),
     };

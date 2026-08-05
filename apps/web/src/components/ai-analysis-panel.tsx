@@ -31,9 +31,17 @@ const TRUST_TIER_LABEL: Record<string, string> = {
 export function AiAnalysisPanel({
   questionId,
   userAnswerId,
+  startSignal = 0,
 }: {
   questionId: string;
   userAnswerId?: string | null;
+  /**
+   * 由外部觸發分析的訊號（例如作答頁的 E → Enter 快捷鍵）。
+   *
+   * 用遞增的數字而不是 boolean：boolean 只能表達「要不要」，
+   * 連按兩次快捷鍵時第二次不會有任何反應。數字每次都不同，因此每次都觸發得了。
+   */
+  startSignal?: number;
 }) {
   const qc = useQueryClient();
   const [jobId, setJobId] = useState<string | null>(null);
@@ -104,6 +112,13 @@ export function AiAnalysisPanel({
       void qc.invalidateQueries({ queryKey: ['analysis', questionId] });
     }
   }, [job.data?.status, qc, questionId]);
+
+  // 外部訊號變化時啟動分析。初始值 0 不觸發，否則一掛載就會自己跑起來。
+  useEffect(() => {
+    if (startSignal > 0) start.mutate(false);
+    // start 是 mutation 物件，每次 render 都是新的參照，放進相依會造成無限迴圈。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startSignal]);
 
   const cancel = useMutation({
     mutationFn: (id: string) => api.post<AiJobResponse>(`/ai/jobs/${id}/cancel`, {}),

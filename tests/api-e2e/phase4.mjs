@@ -473,6 +473,19 @@ const run = async () => {
           ids.every((id, i) => id === `S${i + 1}`);
       })(),
       JSON.stringify(noteAnalysis.body?.sources?.map((s) => s.sourceId)));
+    // 導覽列要標出哪些題已經分析過、哪些正在跑。
+    const noteSession = await call('POST', '/quiz-sessions',
+      { scopes: [{ scopeType: 'question_group', refId: noteCommit.body.questionGroupId }],
+        questionLimit: 50 }, H());
+    const noteOutline = await call('GET', `/quiz-sessions/${noteSession.body.id}/outline`);
+    const analysedItem = noteOutline.body?.items?.find((i) => i.questionId === noteQuestionId);
+    check('**導覽列標出已完成分析的題目**', analysedItem?.analysisStatus === 'completed',
+      `analysisStatus=${analysedItem?.analysisStatus}`);
+    const notAnalysed = noteOutline.body?.items?.find((i) => i.questionId !== noteQuestionId);
+    check('沒分析過的題目狀態為 none',
+      notAnalysed === undefined || notAnalysed.analysisStatus === 'none',
+      `analysisStatus=${notAnalysed?.analysisStatus}`);
+
     check('有筆記時 researchMode 不是 MODEL_ONLY（否則引用不到筆記）',
       noteAnalysis.body?.researchMode !== 'MODEL_ONLY', noteAnalysis.body?.researchMode);
 

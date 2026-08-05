@@ -7,7 +7,7 @@ import type {
 } from '@repo/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { AiAnalysisPanel } from '@/components/ai-analysis-panel';
 import { AppShell } from '@/components/app-shell';
@@ -80,10 +80,33 @@ function QuizSessionView() {
         ? submit.error
         : null;
 
+  const toggleOption = (key: string) => {
+    if (isMultiple) {
+      setSelected((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+    } else {
+      setSelected([key]);
+    }
+  };
+
+  // 由快捷鍵觸發 AI 分析。用遞增數字而非 boolean：
+  // boolean 只能表達「要不要」，連按兩次時第二次不會有反應。
+  const [analyzeSignal, setAnalyzeSignal] = useState(0);
+
   // Hook 必須在任何提前 return 之前呼叫。
   // 放在下面那個「場次已結束」的分支之後，會讓場次結束時的 hook 數量與
   // 進行中時不同，React 會直接拋錯——而那個分支平常跑不到，很容易漏掉。
-  useArrowNavigation({ position, total, onChange: setPosition });
+  const pending = useQuizKeyboard({
+    position,
+    total,
+    optionKeys: data?.options.map((o) => o.key) ?? [],
+    canSubmit: selected.length > 0 && !answer.isPending,
+    // reveal 為 null 代表交卷後模式且尚未交卷，此時分析入口本來就不存在。
+    canAnalyze: reveal !== null,
+    onJump: setPosition,
+    onPickOption: (key) => toggleOption(key),
+    onSubmitAnswer: () => answer.mutate(),
+    onAnalyze: () => setAnalyzeSignal((n) => n + 1),
+  });
 
   if (session.data && session.data.status !== 'in_progress') {
     return (
@@ -94,13 +117,6 @@ function QuizSessionView() {
     );
   }
 
-  const toggleOption = (key: string) => {
-    if (isMultiple) {
-      setSelected((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
-    } else {
-      setSelected([key]);
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -131,6 +147,28 @@ function QuizSessionView() {
         />
       </div>
 
+      {/*
+        暫存指令一定要看得見。按了 M 之後數字鍵的意義就變了，
+        沒有提示的話使用者只會覺得「選項怎麼選不動」。
+      */}
+      {pending.kind !== 'none' && (
+        <div className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2 rounded-full border bg-background px-4 py-2 text-sm shadow-lg">
+          {pending.kind === 'jump' ? (
+            <>
+              跳到第 <span className="font-mono font-medium">{pending.digits || '…'}</span> 題
+              <span className="ml-2 text-xs text-muted-foreground">
+                Enter 或 M 前往．Esc 取消
+              </span>
+            </>
+          ) : (
+            <>
+              AI 分析
+              <span className="ml-2 text-xs text-muted-foreground">Enter 確認．Esc 取消</span>
+            </>
+          )}
+        </div>
+      )}
+
       {error && <ErrorBanner message={error.message} details={error.details} />}
 
       {data && (
@@ -146,7 +184,7 @@ function QuizSessionView() {
           </div>
 
           <div className="space-y-2">
-            {data.options.map((option) => {
+            {data.options.map((option, index) => {
               const picked = selected.includes(option.key);
               const isAnswerKey = reveal?.correctAnswers.includes(option.key) ?? false;
               return (
@@ -162,6 +200,10 @@ function QuizSessionView() {
                     reveal && picked && !isAnswerKey && 'border-destructive bg-destructive/5',
                   )}
                 >
+                  {/* 數字鍵對應的是畫面順序，因此提示也放在畫面順序上。 */}
+                  <span className="w-4 shrink-0 font-mono text-xs text-muted-foreground">
+                    {index < 9 ? index + 1 : ''}
+                  </span>
                   <span className="font-medium">{option.key}</span>
                   <span className="flex-1 whitespace-pre-wrap">{option.text}</span>
                 </button>
@@ -226,6 +268,7 @@ function QuizSessionView() {
               key={data.questionId}
               questionId={data.questionId}
               userAnswerId={data.answer?.answerId}
+              startSignal={analyzeSignal}
             />
           )}
         </Card>
@@ -240,7 +283,7 @@ function QuizSessionView() {
           上一題
         </Button>
         <span className="text-xs text-muted-foreground">
-          方向鍵 ← ↑ / → ↓ 也可以切換（輸入註記時不受影響）
+          ←↑ / →↓ 換題．數字選選項．Enter 送出．E→Enter 分析．M→題號→Enter 跳題
         </span>
         <Button
           variant="secondary"
@@ -255,23 +298,53 @@ function QuizSessionView() {
 }
 
 /**
- * 方向鍵切換題目：← ↑ 上一題，→ ↓ 下一題。
+ * 作答頁的鍵盤操作。
  *
- * 三個必須守住的邊界，少一個就會變成干擾而不是便利：
+ * 這是一個有「暫存指令」的小型模式系統，因此**一定要有畫面提示**：
+ * 按了 M 之後數字鍵的意義就變了，沒有提示的話使用者只會覺得選項選不動。
+ * 回傳值就是給畫面顯示用的。
  *
- *   1. **正在輸入時不能攔。** 註記的 textarea 就在同一頁，
- *      搶走方向鍵會讓游標移不動——那比沒有這個功能更糟。
- *   2. **帶修飾鍵時不能攔。** Alt+← 是瀏覽器的上一頁，Cmd/Ctrl+← 是行首，
- *      攔下來等於把使用者既有的習慣弄壞。
- *   3. **只在真的換題時 preventDefault。** 已經在第一題還按 ←，
- *      應該讓頁面照常捲動，而不是無聲吃掉那個按鍵。
+ * 三個共同守則（與方向鍵同一套）：
+ *   1. 正在輸入時完全不攔——註記的 textarea 就在同一頁。
+ *   2. 帶修飾鍵時不攔，不弄壞瀏覽器與系統既有的快捷鍵。
+ *   3. 只在真的處理了才 preventDefault。
  */
-function useArrowNavigation(options: {
+export type PendingCommand =
+  | { kind: 'none' }
+  | { kind: 'jump'; digits: string }
+  | { kind: 'analyze' };
+
+function useQuizKeyboard(options: {
   position: number;
   total: number;
-  onChange: (position: number) => void;
-}): void {
-  const { position, total, onChange } = options;
+  optionKeys: string[];
+  canSubmit: boolean;
+  canAnalyze: boolean;
+  onJump: (position: number) => void;
+  onPickOption: (key: string) => void;
+  onSubmitAnswer: () => void;
+  onAnalyze: () => void;
+}): PendingCommand {
+  const [pending, setPendingState] = useState<PendingCommand>({ kind: 'none' });
+
+  /*
+   * 暫存指令同時放在 ref 與 state。
+   *
+   * ref 給事件處理器讀（要同步、且不能讓監聽器隨狀態重掛），state 給畫面顯示。
+   * **不能用 setState 的 updater 函式來做這件事**：那個函式必須是純的，
+   * 在裡面呼叫 onJump 之類的副作用，StrictMode 下會被執行兩次——
+   * 按一次 Enter 跳兩題，而且只在開發模式出現。
+   */
+  const pendingRef = useRef<PendingCommand>({ kind: 'none' });
+  const setPending = (next: PendingCommand): void => {
+    pendingRef.current = next;
+    setPendingState(next);
+  };
+
+  // 每次 render 都會拿到新的 callback，用 ref 保存才不必放進相依，
+  // 否則監聽器會不斷被卸載重掛。
+  const latest = useRef(options);
+  latest.current = options;
 
   useEffect(() => {
     const isTyping = (target: EventTarget | null): boolean => {
@@ -284,22 +357,124 @@ function useArrowNavigation(options: {
       if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
       if (isTyping(event.target)) return;
 
-      const delta =
-        event.key === 'ArrowLeft' || event.key === 'ArrowUp'
-          ? -1
-          : event.key === 'ArrowRight' || event.key === 'ArrowDown'
-            ? 1
-            : 0;
-      if (delta === 0) return;
+      const current = latest.current;
+      const key = event.key;
+      const take = (): void => event.preventDefault();
 
-      const next = position + delta;
-      if (next < 1 || next > total) return;
+      if (key === 'Escape') {
+        if (pendingRef.current.kind !== 'none') take();
+        setPending({ kind: 'none' });
+        return;
+      }
 
-      event.preventDefault();
-      onChange(next);
+      const mode = pendingRef.current;
+
+      // --- 跳題模式：數字的意義變成題號 ---
+      if (mode.kind === 'jump') {
+        if (/^[0-9]$/.test(key)) {
+          take();
+          // 上限 4 位數：題號不會比這更長，也避免無限累積。
+          setPending({ kind: 'jump', digits: (mode.digits + key).slice(0, 4) });
+          return;
+        }
+        if (key === 'Backspace') {
+          take();
+          setPending({ kind: 'jump', digits: mode.digits.slice(0, -1) });
+          return;
+        }
+        if (key === 'Enter' || key === 'm' || key === 'M') {
+          take();
+          const target = Number(mode.digits);
+          setPending({ kind: 'none' });
+          if (mode.digits !== '' && target >= 1 && target <= current.total) {
+            current.onJump(target);
+          }
+          return;
+        }
+        // 其他按鍵取消跳題，並讓它照一般規則繼續處理。
+        setPending({ kind: 'none' });
+        handleNormal(event, current, take);
+        return;
+      }
+
+      // --- 分析待確認 ---
+      if (mode.kind === 'analyze') {
+        if (key === 'Enter') {
+          take();
+          setPending({ kind: 'none' });
+          if (current.canAnalyze) current.onAnalyze();
+          return;
+        }
+        setPending({ kind: 'none' });
+        handleNormal(event, current, take);
+        return;
+      }
+
+      // --- 一般模式 ---
+      if (key === 'm' || key === 'M') {
+        take();
+        setPending({ kind: 'jump', digits: '' });
+        return;
+      }
+      if ((key === 'e' || key === 'E') && current.canAnalyze) {
+        take();
+        setPending({ kind: 'analyze' });
+        return;
+      }
+      handleNormal(event, current, take);
     };
 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [position, total, onChange]);
+  }, []);
+
+  return pending;
+}
+
+/** 一般模式下的按鍵：數字選項、Enter 送出、方向鍵換題。 */
+function handleNormal(
+  event: KeyboardEvent,
+  current: {
+    position: number;
+    total: number;
+    optionKeys: string[];
+    canSubmit: boolean;
+    onJump: (position: number) => void;
+    onPickOption: (key: string) => void;
+    onSubmitAnswer: () => void;
+  },
+  take: () => void,
+): void {
+  const key = event.key;
+
+  // 數字鍵選選項。選項順序就是畫面上的顯示順序（已套用 option_order）。
+  if (/^[1-9]$/.test(key)) {
+    const optionKey = current.optionKeys[Number(key) - 1];
+    if (optionKey !== undefined) {
+      take();
+      current.onPickOption(optionKey);
+    }
+    return;
+  }
+
+  if (key === 'Enter') {
+    if (current.canSubmit) {
+      take();
+      current.onSubmitAnswer();
+    }
+    return;
+  }
+
+  const delta =
+    key === 'ArrowLeft' || key === 'ArrowUp'
+      ? -1
+      : key === 'ArrowRight' || key === 'ArrowDown'
+        ? 1
+        : 0;
+  if (delta === 0) return;
+
+  const next = current.position + delta;
+  if (next < 1 || next > current.total) return;
+  take();
+  current.onJump(next);
 }
