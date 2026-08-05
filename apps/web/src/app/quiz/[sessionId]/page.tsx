@@ -1,9 +1,11 @@
 'use client';
 
-import type {
-  QuizQuestionResponse,
-  QuizSessionResponse,
-  SubmitAnswerResponse,
+import {
+  findNextUnanswered,
+  type QuizOutlineResponse,
+  type QuizQuestionResponse,
+  type QuizSessionResponse,
+  type SubmitAnswerResponse,
 } from '@repo/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useRouter } from 'next/navigation';
@@ -38,6 +40,13 @@ function QuizSessionView() {
   const session = useQuery({
     queryKey: ['quiz-session', sessionId],
     queryFn: () => api.get<QuizSessionResponse>(`/quiz-sessions/${sessionId}`),
+  });
+
+  // 與 QuestionNavigator 共用同一個 query key，因此不會多打一次請求。
+  const outline = useQuery({
+    queryKey: ['quiz-session', sessionId, 'outline'],
+    queryFn: () => api.get<QuizOutlineResponse>(`/quiz-sessions/${sessionId}/outline`),
+    staleTime: 30_000,
   });
 
   const question = useQuery({
@@ -103,6 +112,10 @@ function QuizSessionView() {
     // reveal 為 null 代表交卷後模式且尚未交卷，此時分析入口本來就不存在。
     canAnalyze: reveal !== null,
     onJump: setPosition,
+    onJumpNextUnanswered: () => {
+      const next = findNextUnanswered(outline.data?.items ?? [], position);
+      if (next !== null) setPosition(next);
+    },
     onPickOption: (key) => toggleOption(key),
     onSubmitAnswer: () => answer.mutate(),
     onAnalyze: () => setAnalyzeSignal((n) => n + 1),
@@ -155,10 +168,21 @@ function QuizSessionView() {
         <div className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2 rounded-full border bg-background px-4 py-2 text-sm shadow-lg">
           {pending.kind === 'jump' ? (
             <>
-              跳到第 <span className="font-mono font-medium">{pending.digits || '…'}</span> 題
-              <span className="ml-2 text-xs text-muted-foreground">
-                Enter 或 M 前往．Esc 取消
-              </span>
+              {pending.digits === '' ? (
+                <>
+                  輸入題號
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    直接按 M 或 Enter 跳到最近未作答．Esc 取消
+                  </span>
+                </>
+              ) : (
+                <>
+                  跳到第 <span className="font-mono font-medium">{pending.digits}</span> 題
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    Enter 或 M 前往．Esc 取消
+                  </span>
+                </>
+              )}
             </>
           ) : (
             <>
@@ -283,7 +307,7 @@ function QuizSessionView() {
           上一題
         </Button>
         <span className="text-xs text-muted-foreground">
-          ←↑ / →↓ 換題．數字選選項．Enter 送出．E→Enter 分析．M→題號→Enter 跳題
+          ←↑ / →↓ 換題．數字選選項．Enter 送出．E→Enter 分析．M→題號→Enter 跳題．M→M 跳未作答
         </span>
         <Button
           variant="secondary"
@@ -321,6 +345,8 @@ function useQuizKeyboard(options: {
   canSubmit: boolean;
   canAnalyze: boolean;
   onJump: (position: number) => void;
+  /** 沒有輸入題號就結束跳題模式時，跳到最近一個尚未作答的題目。 */
+  onJumpNextUnanswered: () => void;
   onPickOption: (key: string) => void;
   onSubmitAnswer: () => void;
   onAnalyze: () => void;
@@ -386,7 +412,10 @@ function useQuizKeyboard(options: {
           take();
           const target = Number(mode.digits);
           setPending({ kind: 'none' });
-          if (mode.digits !== '' && target >= 1 && target <= current.total) {
+          if (mode.digits === '') {
+            // M 之後直接再按一次 → 跳到最近尚未作答的題目。
+            current.onJumpNextUnanswered();
+          } else if (target >= 1 && target <= current.total) {
             current.onJump(target);
           }
           return;
