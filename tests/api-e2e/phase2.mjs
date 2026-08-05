@@ -595,6 +595,81 @@ const run = async () => {
     { scopes: [{ scopeType: 'subject', refId: subject.body.id }] });
   check('缺少 CSRF 標頭 → 403', noCsrf.status === 403, `status=${noCsrf.status}`);
 
+  console.log('\n=== 作答範圍：章節可單選也可多選 ===');
+  // 自帶科目：在既有的測試科目裡加題目，會讓後面依賴「正好 6 題」的斷言失效。
+  const mcSubject = await call('POST', '/subjects', { name: `多章節測試科目 ${stamp}` }, H());
+  const mcChapter1 = await call('POST', '/chapters',
+    { subjectId: mcSubject.body.id, name: '第一章' }, H());
+  const mcGroup1 = await call('POST', '/question-groups',
+    { subjectId: mcSubject.body.id, chapterId: mcChapter1.body.id, name: '第一章題組' }, H());
+  for (const n of [1, 2, 3]) {
+    await call('POST', '/questions', single(n, 'A', { questionGroupId: mcGroup1.body.id }), H());
+  }
+
+  // 多選時範圍取聯集。
+  // 後端一直支援 scopes 陣列，但同型範圍給多筆這條路徑從來沒被跑過。
+  const mcChapter2 = await call('POST', '/chapters',
+    { subjectId: mcSubject.body.id, name: '第二章 行政程序' }, H());
+  const mcGroup2 = await call('POST', '/question-groups',
+    { subjectId: mcSubject.body.id, chapterId: mcChapter2.body.id, name: '第二章題組' }, H());
+  const mcChapter3 = await call('POST', '/chapters',
+    { subjectId: mcSubject.body.id, name: '第三章 行政救濟' }, H());
+  const mcGroup3 = await call('POST', '/question-groups',
+    { subjectId: mcSubject.body.id, chapterId: mcChapter3.body.id, name: '第三章題組' }, H());
+  for (const n of [11, 12]) {
+    await call('POST', '/questions', single(n, 'A', { questionGroupId: mcGroup2.body.id }), H());
+  }
+  await call('POST', '/questions', single(21, 'A', { questionGroupId: mcGroup3.body.id }), H());
+
+  const twoChapters = await call('POST', '/quiz-sessions', {
+    scopes: [
+      { scopeType: 'chapter', refId: mcChapter1.body.id },
+      { scopeType: 'chapter', refId: mcChapter2.body.id },
+    ],
+  }, H());
+  check('**多個章節取聯集**（3 + 2 = 5 題）', twoChapters.body?.totalQuestions === 5,
+    `n=${twoChapters.body?.totalQuestions}`);
+  check('場次記得每一個範圍', twoChapters.body?.scopes?.length === 2,
+    JSON.stringify(twoChapters.body?.scopes?.map((s) => s.refName)));
+
+  const threeChapters = await call('POST', '/quiz-sessions', {
+    scopes: [
+      { scopeType: 'chapter', refId: mcChapter1.body.id },
+      { scopeType: 'chapter', refId: mcChapter2.body.id },
+      { scopeType: 'chapter', refId: mcChapter3.body.id },
+    ],
+  }, H());
+  check('**三個章節也是聯集而不是交集**（3 + 2 + 1 = 6 題）',
+    threeChapters.body?.totalQuestions === 6, `n=${threeChapters.body?.totalQuestions}`);
+
+  // 挑不相鄰的兩章：真的是被選中的那兩章，沒有把中間那章一起掃進來。
+  const skipMiddle = await call('POST', '/quiz-sessions', {
+    scopes: [
+      { scopeType: 'chapter', refId: mcChapter1.body.id },
+      { scopeType: 'chapter', refId: mcChapter3.body.id },
+    ],
+  }, H());
+  check('**跳過中間的章節不會被算進來**（3 + 1 = 4 題）',
+    skipMiddle.body?.totalQuestions === 4, `n=${skipMiddle.body?.totalQuestions}`);
+
+  const dupChapter = await call('POST', '/quiz-sessions', {
+    scopes: [
+      { scopeType: 'chapter', refId: mcChapter2.body.id },
+      { scopeType: 'chapter', refId: mcChapter2.body.id },
+    ],
+  }, H());
+  check('同一章節送兩次不會出現重複的題目', dupChapter.body?.totalQuestions === 2,
+    `status=${dupChapter.status} ${JSON.stringify(dupChapter.body)}`);
+
+  const withBadChapter = await call('POST', '/quiz-sessions', {
+    scopes: [
+      { scopeType: 'chapter', refId: mcChapter1.body.id },
+      { scopeType: 'chapter', refId: '00000000-0000-4000-8000-000000000000' },
+    ],
+  }, H());
+  check('**多選之中夾帶不存在的章節 → 整批擋下**', withBadChapter.status === 404,
+    `status=${withBadChapter.status}`);
+
   console.log(`\n=== Phase 2 結果：${pass} 通過、${fail} 失敗 ===\n`);
   process.exit(fail === 0 ? 0 : 1);
 };

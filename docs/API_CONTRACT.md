@@ -270,6 +270,8 @@ partially_valid → committing → partially_valid   （部分題組匯入，其
 ```
 
 - `scopeType` 接受 `subject` / `chapter` / `question_group` / `knowledge_tag`，多個範圍之間取**聯集**。
+  同型範圍給多筆是常見用法——例如一次帶三筆 `chapter`，就是「這三章的題目」。
+  重複的範圍會先去重（與自己取聯集沒有意義），不會因此報錯。
 - `onlyMistakes` 與範圍取**交集**；`masteryStates` 只能搭配 `onlyMistakes` 使用。
 - 範圍內沒有可作答的題目 → `422 QUIZ_NO_QUESTIONS_MATCHED`；範圍 ID 不存在 → `404`。
 - 沒有給任何範圍且未勾選 `onlyMistakes` → `400 VALIDATION_FAILED`。

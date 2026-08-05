@@ -286,11 +286,42 @@ node scripts/create-test-db.mjs --drop
 cd packages/db && DATABASE_URL=<測試連線字串> npx drizzle-kit migrate && cd ..
 
 # 先重置資料庫，再啟動後端 —— 種子資料是啟動時寫入的，順序反了會缺種子
+# QUEUE_PREFIX 一定要給：Redis 是共用的，不隔離會和 pnpm dev 搶同一條 AI 佇列
 DATABASE_URL=<測試連線字串> PORT=4101 AI_PROVIDER=mock SEARCH_PROVIDER=mock \
-  node apps/api/dist/main.js
+  QUEUE_PREFIX=qba-e2e node apps/api/dist/main.js
 
 BASE=http://localhost:4101/api/v1 pnpm test:api-e2e
 ```
+
+### 測試後端必須設 `QUEUE_PREFIX`
+
+資料庫可以另開一個，**但 Redis 是同一個**。`pnpm dev` 的後端與測試後端
+會連上同一條 BullMQ 佇列，兩邊的 worker 互相搶對方的任務：
+
+- 測試任務被 dev 的 worker 撿走 → 它連的是正式資料庫，找不到那些題目，
+  任務以「找不到指定的題目」失敗，而**資料庫裡的 `ai_jobs` 仍停在 `pending`**。
+  Phase 4／5 會出現三十幾個看起來毫無頭緒的失敗。
+- 反過來也成立：**測試 worker 會撿走並毀掉你正在跑的真實分析任務。**
+
+`QUEUE_PREFIX` 早就存在也確實有接線（`ai-queue.service.ts`），
+只是這份文件先前沒寫，於是沒人設。
+
+症狀完全不指向原因：佇列是空的、worker 有啟動、程式也沒問題，
+連錯誤訊息都沒有——`ai_jobs` 只是安靜地停在 `pending`。
+唯一說得出實話的是 Redis 裡的 `failedReason`：
+
+```bash
+# 先確認是不是有第二個後端在跑（不要殺掉使用者的 pnpm dev）
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Select ProcessId, CommandLine
+
+# 失敗原因只存在 Redis
+redis-cli -a <密碼> ZREVRANGE <prefix>:ai-question-analysis:failed 0 3
+redis-cli -a <密碼> HGET <prefix>:ai-question-analysis:<jobId> failedReason
+```
+
+這次先誤判成「跑 verify 把 worker 餓死」，因為第一次出問題時剛好併跑了
+`pnpm verify`。第二次什麼都沒跑仍然失敗，才排除掉那個解釋——
+**症狀重現一次不足以確認原因，要能把原因移除後症狀消失才算。**
 
 > 端到端驗證建議打在**測試資料庫**上，而不是平常使用的資料庫 ——
 > 這些腳本會實際建立科目、題目與作答紀錄。作法是把後端以測試連線字串另起一個 port：
@@ -1576,6 +1607,39 @@ React Testing Library。**React 元件的掛載時機、effect 觸發次數都�
 
 | 情境 | 結果 |
 |---|---|
-| 全新資料庫 | 43 + 121 + 134 + 76 + 125 + 104 = **603 項全過** |
-| 緊接著重跑 | 39 + 121 + 134 + 76 + 125 + 104 = **599 項全過**（第二次不需重新 bootstrap） |
+| 全新資料庫 | 43 + 121 + 140 + 76 + 125 + 104 = **609 項全過** |
+| 緊接著重跑 | 39 + 121 + 140 + 76 + 125 + 104 = **605 項全過**（第二次不需重新 bootstrap） |
 | `pnpm verify` | exit 0，441 個單元測試 |
+
+---
+
+## 作答範圍：章節可單選也可多選
+
+複習常常是「第三、五、七章一起」。原本 `/quiz/new` 的章節是單選下拉，
+一次只表達得出一章。後端的 `scopes` 一直是陣列且對同型範圍取 OR，
+所以這是純前端的改動——但**「後端支援」是讀程式讀來的推論，不是事實**，
+因此補了端到端斷言把它變成事實。
+
+章節改用核取方塊：都不勾＝整個科目，勾一個＝單章，勾多個＝聯集。
+題組在勾了兩章以上時停用——題組隸屬單一章節，和「多個章節」是互相矛盾的範圍。
+
+### 順帶查出的 500
+
+同一個章節送兩次會撞上 `quiz_session_scopes` 的唯一索引，
+以 `INTERNAL_ERROR` 500 回給使用者。介面產生不出重複值，但 API 不該因為
+一個語意上無害的輸入就崩掉。改成插入前先去重。
+
+### 端到端斷言（`phase2.mjs`，+6 項）
+
+| 斷言 | 少了什麼就會失敗 |
+|---|---|
+| 兩章取聯集（3 + 2 = 5 題） | 同型範圍沒有 OR |
+| 三章也是聯集而不是交集（3 + 2 + 1 = 6 題） | 條件被 AND 起來時會變成 0 題 |
+| 跳過中間那章不會被算進來（3 + 1 = 4 題） | 範圍被放寬成整個科目 |
+| 同一章送兩次不會重複出題 | 去重 |
+| 多選之中夾帶不存在的章節 → 整批 404 | 逐筆的存在性檢查 |
+| 場次記得每一個範圍 | 只存了第一筆 |
+
+這段測試**自帶科目**。原本寫在既有科目底下時，新增的題目讓後面
+「random 第 1 次仍包含全部 6 題」的基準值失效——正是 TEST_PLAN 前面
+提醒過的那件事，這次自己踩了一次。

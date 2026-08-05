@@ -105,9 +105,18 @@ export class QuizSessionsService {
 
       const id = inserted[0]!.id;
 
-      const scopeValues: (typeof schema.quizSessionScopes.$inferInsert)[] = dto.scopes.map(
-        (scope) => ({ sessionId: id, scopeType: scope.scopeType, refId: scope.refId }),
-      );
+      /*
+       * 範圍先去重。
+       *
+       * 同一個範圍送兩次和送一次是同一件事（聯集與自己取聯集），但
+       * quiz_session_scopes 有唯一索引，直接插入會撞成 500——使用者只是
+       * 重複勾了同一章，不該拿到「伺服器發生未預期的錯誤」。
+       */
+      const scopeValues: (typeof schema.quizSessionScopes.$inferInsert)[] = [
+        ...new Map(
+          dto.scopes.map((scope) => [`${scope.scopeType}:${scope.refId}`, scope]),
+        ).values(),
+      ].map((scope) => ({ sessionId: id, scopeType: scope.scopeType, refId: scope.refId }));
       if (dto.onlyMistakes) {
         scopeValues.push({ sessionId: id, scopeType: 'mistake', refId: null });
       }
