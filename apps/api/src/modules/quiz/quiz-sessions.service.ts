@@ -422,6 +422,23 @@ export class QuizSessionsService {
       .limit(1);
     const answer = answerRows[0];
 
+    // 個人標記與答案揭露無關，因此不經過 resolveReveal。
+    const markRows = await db
+      .select({
+        isFlagged: schema.questionMarks.isFlagged,
+        note: schema.questionMarks.note,
+        updatedAt: schema.questionMarks.updatedAt,
+      })
+      .from(schema.questionMarks)
+      .where(
+        and(
+          eq(schema.questionMarks.questionId, row.question.id),
+          eq(schema.questionMarks.userId, userId),
+        ),
+      )
+      .limit(1);
+    const mark = markRows[0];
+
     return {
       sessionQuestionId: row.sessionQuestion.id,
       questionId: row.question.id,
@@ -451,6 +468,9 @@ export class QuizSessionsService {
         explanation: row.question.explanation,
         isProvisional: answer?.isProvisional ?? row.question.status === 'disputed',
       }),
+      mark: mark
+        ? { isFlagged: mark.isFlagged, note: mark.note, updatedAt: mark.updatedAt.toISOString() }
+        : null,
     };
   }
 
@@ -521,6 +541,7 @@ export class QuizSessionsService {
         answerId: schema.userAnswers.id,
         isCorrect: schema.userAnswers.isCorrect,
         isProvisional: schema.userAnswers.isProvisional,
+        isFlagged: schema.questionMarks.isFlagged,
       })
       .from(schema.quizSessionQuestions)
       .innerJoin(schema.questions, eq(schema.questions.id, schema.quizSessionQuestions.questionId))
@@ -535,6 +556,13 @@ export class QuizSessionsService {
             select max(ua.attempt_number) from user_answers ua
             where ua.session_question_id = quiz_session_questions.id
           )`,
+        ),
+      )
+      .leftJoin(
+        schema.questionMarks,
+        and(
+          eq(schema.questionMarks.questionId, schema.questions.id),
+          eq(schema.questionMarks.userId, userId),
         ),
       )
       .where(eq(schema.quizSessionQuestions.sessionId, sessionId))
@@ -555,6 +583,7 @@ export class QuizSessionsService {
           answered: hasAnswer,
           isCorrect: this.canReveal(session, hasAnswer) ? (row.isCorrect ?? null) : null,
           isProvisional: row.isProvisional ?? false,
+          isFlagged: row.isFlagged ?? false,
         };
       }),
     };

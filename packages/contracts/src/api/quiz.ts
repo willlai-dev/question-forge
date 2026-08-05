@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { MASTERY_STATES } from '../quiz/mastery';
 import { paginationQuerySchema, uuidSchema } from './common';
-import { optionKeySchema, questionTypeSchema } from './questions';
+import { optionKeySchema, questionMarkSchema, questionTypeSchema } from './questions';
 
 /**
  * 作答契約。
@@ -158,6 +158,13 @@ export const quizQuestionResponseSchema = z.object({
   questionGroupName: z.string(),
   answer: quizAnswerStateSchema.nullable(),
   reveal: quizRevealSchema.nullable(),
+  /**
+   * 個人標記與註記。
+   *
+   * 與答案揭露無關，因此**不受 revealMode 限制**——標記自己的想法不會洩漏答案，
+   * 而交卷前正是最想標記的時刻。
+   */
+  mark: questionMarkSchema.nullable(),
 });
 export type QuizQuestionResponse = z.infer<typeof quizQuestionResponseSchema>;
 
@@ -182,6 +189,8 @@ export const quizOutlineItemSchema = z.object({
   isCorrect: z.boolean().nullable(),
   /** 這題的答案爭議待審，作答為暫記、不計入診斷。 */
   isProvisional: z.boolean(),
+  /** 自己標為重點。導覽列據此標出來，才找得回剛才標的那幾題。 */
+  isFlagged: z.boolean(),
 });
 export type QuizOutlineItem = z.infer<typeof quizOutlineItemSchema>;
 

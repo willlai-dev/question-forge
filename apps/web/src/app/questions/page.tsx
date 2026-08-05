@@ -28,6 +28,7 @@ function QuestionsView() {
     subjectId: '',
     type: '',
     reviewRequired: '',
+    flagged: '',
     hasExplanation: '',
   });
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -42,6 +43,7 @@ function QuestionsView() {
   if (filters.subjectId) params.set('subjectId', filters.subjectId);
   if (filters.type) params.set('type', filters.type);
   if (filters.reviewRequired) params.set('reviewRequired', filters.reviewRequired);
+  if (filters.flagged) params.set('flagged', filters.flagged);
   if (filters.hasExplanation) params.set('hasExplanation', filters.hasExplanation);
 
   const questions = useQuery({
@@ -136,6 +138,19 @@ function QuestionsView() {
           <option value="true">需複核</option>
           <option value="false">不需複核</option>
         </select>
+        {/*
+          個人標記與「需複核」刻意分成兩個篩選器：
+          後者是題庫品質（匯入時答案存疑），前者是自己覺得重要，兩件事。
+        */}
+        <select
+          className={selectClass}
+          value={filters.flagged}
+          onChange={(e) => setFilters((f) => ({ ...f, flagged: e.target.value }))}
+        >
+          <option value="">重點不限</option>
+          <option value="true">只看我標的重點</option>
+          <option value="false">未標記</option>
+        </select>
         <select
           className={selectClass}
           value={filters.hasExplanation}
@@ -192,6 +207,19 @@ function QuestionsView() {
                   {question.chapterName ? ` / ${question.chapterName}` : ''} /{' '}
                   {question.questionGroupName}
                 </span>
+                {question.mark?.isFlagged && (
+                  <span
+                    className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800"
+                    title={question.mark.note ?? undefined}
+                  >
+                    ★ 重點
+                  </span>
+                )}
+                {question.mark?.note && !question.mark.isFlagged && (
+                  <span className="rounded bg-muted px-1.5 py-0.5" title={question.mark.note}>
+                    有註記
+                  </span>
+                )}
                 {question.reviewRequired && (
                   <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">需複核</span>
                 )}

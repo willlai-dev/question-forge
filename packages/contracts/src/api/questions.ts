@@ -96,6 +96,28 @@ export const optionResponseSchema = z.object({
   sortOrder: z.number().int(),
 });
 
+/**
+ * 單題的個人標記。
+ *
+ * 與 `reviewRequired` 是兩件事：後者是「這道題目本身需要人工複核」（題庫品質），
+ * 這裡是「我覺得這題重要」（個人學習）。混在一起之後就再也分不開。
+ */
+export const questionMarkSchema = z.object({
+  isFlagged: z.boolean(),
+  note: z.string().nullable(),
+  updatedAt: z.string().datetime(),
+});
+export type QuestionMark = z.infer<typeof questionMarkSchema>;
+
+/** 設定標記。兩個欄位都省略等於沒有變更；都清空則整筆標記會被移除。 */
+export const setQuestionMarkSchema = z
+  .object({
+    isFlagged: z.boolean().optional(),
+    note: z.string().trim().max(2000).nullish(),
+  })
+  .strict();
+export type SetQuestionMarkRequest = z.infer<typeof setQuestionMarkSchema>;
+
 export const questionResponseSchema = z.object({
   id: z.string().uuid(),
   questionGroupId: z.string().uuid(),
@@ -123,6 +145,8 @@ export const questionResponseSchema = z.object({
    */
   knowledgeTags: z.array(questionTagResponseSchema).default([]),
   skillTags: z.array(questionTagResponseSchema).default([]),
+  /** 個人標記；沒有標記過就是 null。 */
+  mark: questionMarkSchema.nullable().default(null),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -139,6 +163,8 @@ export const listQuestionsQuerySchema = paginationQuerySchema.extend({
   hasExplanation: z.enum(['true', 'false']).optional(),
   /** 只找掛了這個知識點的題目；'none' 代表只找完全沒有知識點的題目。 */
   knowledgeTagId: z.union([uuidSchema, z.literal('none')]).optional(),
+  /** 只找自己標為重點的題目。 */
+  flagged: z.enum(['true', 'false']).optional(),
   sort: z.enum(['number', 'created', 'updated']).default('number'),
   order: z.enum(['asc', 'desc']).default('asc'),
 });

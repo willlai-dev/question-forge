@@ -348,6 +348,76 @@ const run = async () => {
     { sessionQuestionId: hq1.body.sessionQuestionId, selectedAnswers: ['B'] }, H());
   check('交卷後再作答 → 409', answerAfterSubmit.status === 409);
 
+  /*
+   * 單題的個人標記與註記。
+   *
+   * 在此之前，一道題目唯一會被「標出來」的方式是答錯。
+   * 標記與答案揭露無關，因此**交卷前也要能標**——那正是最想標記的時刻。
+   */
+  console.log('\n=== 單題個人標記 ===');
+  const markQ = hq1.body.questionId;
+
+  const flagged = await call('PUT', `/questions/${markQ}/mark`, { isFlagged: true }, H());
+  check('可以標記為重點', flagged.status === 200 && flagged.body?.mark?.isFlagged === true,
+    JSON.stringify(flagged.body?.mark));
+
+  const noted = await call('PUT', `/questions/${markQ}/mark`, { note: '這題的但書容易漏看' }, H());
+  check('可以加註記', noted.body?.mark?.note === '這題的但書容易漏看',
+    JSON.stringify(noted.body?.mark));
+  check('**只送註記不會把既有標記清掉**', noted.body?.mark?.isFlagged === true,
+    JSON.stringify(noted.body?.mark));
+
+  const unflagged = await call('PUT', `/questions/${markQ}/mark`, { isFlagged: false }, H());
+  check('**取消標記不會把註記清掉**',
+    unflagged.body?.mark?.isFlagged === false && unflagged.body?.mark?.note !== null,
+    JSON.stringify(unflagged.body?.mark));
+
+  const cleared = await call('PUT', `/questions/${markQ}/mark`, { note: null }, H());
+  check('**標記與註記都清空後整筆標記消失（不是留一列空殼）**',
+    cleared.body?.mark === null, JSON.stringify(cleared.body?.mark));
+
+  await call('PUT', `/questions/${markQ}/mark`, { isFlagged: true, note: '重要' }, H());
+
+  const flaggedList = await call('GET', '/questions?flagged=true&pageSize=50');
+  check('可以只列出標為重點的題目',
+    flaggedList.body?.items?.some((q) => q.id === markQ),
+    `total=${flaggedList.body?.pagination?.total}`);
+  const unflaggedList = await call('GET', '/questions?flagged=false&pageSize=50');
+  check('未標記篩選不會包含已標記的題目',
+    !unflaggedList.body?.items?.some((q) => q.id === markQ));
+
+  /*
+   * 標記是新的回應欄位，因此要重驗一次防洩漏。
+   *
+   * 必須另開一個**尚未交卷**的 after_submit 場次：上面那個 hid 早就交卷了，
+   * 交卷後出現 reveal 是正確行為，拿它來驗「不得洩漏」只會驗到自己搞錯前提。
+   */
+  const markSession = await call('POST', '/quiz-sessions',
+    { scopes: [{ scopeType: 'question_group', refId: group.body.id }], revealMode: 'after_submit' }, H());
+  const markSid = markSession.body.id;
+  const markFirst = await call('GET', `/quiz-sessions/${markSid}/questions/1`);
+  await call('PUT', `/questions/${markFirst.body.questionId}/mark`,
+    { isFlagged: true, note: '交卷前就標起來' }, H());
+
+  const markedQuestion = await call('GET', `/quiz-sessions/${markSid}/questions/1`);
+  check('**交卷前就能看到自己的標記**', markedQuestion.body?.mark?.isFlagged === true,
+    JSON.stringify(markedQuestion.body?.mark));
+  check('**帶標記的取題回應仍然沒有任何答案洩漏**',
+    findAnswerLeaks(markedQuestion.body).length === 0,
+    JSON.stringify(findAnswerLeaks(markedQuestion.body)));
+
+  const markedOutline = await call('GET', `/quiz-sessions/${markSid}/outline`);
+  check('導覽列標出重點題',
+    markedOutline.body?.items?.some((i) => i.isFlagged === true),
+    JSON.stringify(markedOutline.body?.items?.map((i) => i.isFlagged)));
+  check('**帶標記的導覽列仍然沒有任何答案洩漏**',
+    findAnswerLeaks(markedOutline.body).length === 0,
+    JSON.stringify(findAnswerLeaks(markedOutline.body)));
+
+  const badMark = await call('PUT', '/questions/00000000-0000-4000-8000-000000000000/mark',
+    { isFlagged: true }, H());
+  check('對不存在的題目設標記 → 404', badMark.status === 404, `status=${badMark.status}`);
+
   console.log('\n=== 修改答案 ===');
   const changeable = await call('POST', '/quiz-sessions',
     { scopes: [{ scopeType: 'question_group', refId: group.body.id }], allowAnswerChange: true }, H());

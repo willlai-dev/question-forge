@@ -143,6 +143,15 @@ export function QuestionNavigator({
                     )}
                   >
                     {item.position}
+                    {/* 自己標為重點的題目要找得回來，否則標了也沒用。 */}
+                    {item.isFlagged && (
+                      <span
+                        className="absolute left-0.5 top-0.5 text-[10px] leading-none text-amber-500"
+                        title="已標為重點"
+                      >
+                        ★
+                      </span>
+                    )}
                     {item.isProvisional && (
                       <span
                         className="absolute right-0.5 top-0.5 text-[10px] leading-none text-amber-600"
@@ -178,6 +187,10 @@ export function QuestionNavigator({
                 <Legend className="border-destructive bg-destructive/10" label="答錯" />
                 <Legend className="border-primary bg-accent" label="已作答" />
                 <Legend className="bg-muted/50" label="未作答" />
+                <span className="flex items-center gap-1">
+                  <span className="text-amber-500">★</span>
+                  重點
+                </span>
               </div>
             </>
           )}

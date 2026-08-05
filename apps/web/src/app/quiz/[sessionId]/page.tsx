@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 
 import { AiAnalysisPanel } from '@/components/ai-analysis-panel';
 import { AppShell } from '@/components/app-shell';
+import { QuestionMarkControl } from '@/components/question-mark-control';
 import { QuestionNavigator } from '@/components/question-navigator';
 import { Button, Card, ErrorBanner } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
@@ -162,6 +163,12 @@ function QuizSessionView() {
               );
             })}
           </div>
+
+          {/*
+            標記與註記放在作答區塊裡，而且**不受 reveal 限制**：
+            標記自己的想法不會洩漏答案，交卷前正是最想標記的時刻。
+          */}
+          <QuestionMarkControl questionId={data.questionId} mark={data.mark} />
 
           <div className="flex items-center gap-3">
             <Button

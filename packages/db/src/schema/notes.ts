@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   index,
   integer,
@@ -69,6 +70,44 @@ export const studyNotes = pgTable(
     index('study_notes_group_idx').on(t.questionGroupId),
     index('study_notes_subject_idx').on(t.subjectId),
     index('study_notes_chapter_idx').on(t.chapterId),
+  ],
+);
+
+/**
+ * 單題的個人標記與註記。
+ *
+ * 在此之前，一道題目唯一會被「標出來」的方式是**答錯**（`mistake_records`）。
+ * 但看到重要的題目時未必答錯，那些題目原本沒有任何地方可以留下痕跡。
+ *
+ * 刻意**不重用** `questions.review_required`：那個欄位講的是「這道題目本身
+ * 需要人工複核」（匯入時答案存疑、OCR 可疑），屬於題庫品質。
+ * 混進「我覺得這題重要」會讓兩種語意再也分不開，篩選時也講不清楚在篩什麼。
+ *
+ * 也刻意**不放進 `questions` 資料表**：那裡是題目內容，有版本快照與內容雜湊；
+ * 個人標記是使用者狀態，跟著人走而不是跟著題目版本走。
+ */
+export const questionMarks = pgTable(
+  'question_marks',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    questionId: uuid('question_id')
+      .notNull()
+      .references(() => questions.id, { onDelete: 'cascade' }),
+    /** 標為重點。與註記各自獨立：可以只標記不寫字，也可以只寫字不標記。 */
+    isFlagged: boolean('is_flagged').notNull().default(false),
+    /** 自己的註記，例如「這題的但書容易漏看」。 */
+    note: text('note'),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex('question_marks_user_question_unique').on(t.userId, t.questionId),
+    // 「列出我標記的重點題」是主要查詢，因此索引只涵蓋有標記的列。
+    index('question_marks_flagged_idx')
+      .on(t.userId, t.updatedAt.desc())
+      .where(sql`is_flagged = true`),
   ],
 );
 

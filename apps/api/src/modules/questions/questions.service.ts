@@ -8,6 +8,7 @@ import {
   type PaginationMeta,
   type QuestionResponse,
   type QuestionVersionResponse,
+  type SetQuestionMarkRequest,
   type UpdateQuestionRequest,
 } from '@repo/contracts';
 import { schema, type Database, type DatabaseHandle } from '@repo/db';
@@ -62,6 +63,23 @@ export class QuestionsService {
         sql`exists (select 1 from question_knowledge_tags qkt
              where qkt.question_id = questions.id
                and qkt.knowledge_tag_id = ${query.knowledgeTagId})`,
+      );
+    }
+
+    // 只找自己標為重點的題目。同樣寫死表名——理由與上面的知識點子查詢相同。
+    if (query.flagged === 'true') {
+      conditions.push(
+        sql`exists (select 1 from question_marks qm
+             where qm.question_id = questions.id
+               and qm.user_id = ${userId}
+               and qm.is_flagged = true)`,
+      );
+    } else if (query.flagged === 'false') {
+      conditions.push(
+        sql`not exists (select 1 from question_marks qm
+             where qm.question_id = questions.id
+               and qm.user_id = ${userId}
+               and qm.is_flagged = true)`,
       );
     }
 
@@ -337,6 +355,56 @@ export class QuestionsService {
   // ------------------------------------------------------------- helpers
 
   /** 把題目列補上選項與階層名稱。 */
+  /**
+   * 設定或清除單題的個人標記。
+   *
+   * 兩者都空（沒有標記且沒有註記）時**刪除整列**：
+   * 「沒有標記」應該是乾淨的不存在，而不是一列全是預設值的殘骸——
+   * 否則 `mark` 會回傳一個什麼都沒有的物件，前端還得再判斷一次。
+   */
+  async setMark(
+    userId: string,
+    questionId: string,
+    dto: SetQuestionMarkRequest,
+  ): Promise<QuestionResponse> {
+    // 先確認題目存在且屬於自己；否則等於可以對別人的題目留下標記。
+    await this.getOrThrow(userId, questionId);
+
+    const { db } = this.database;
+    const existing = await db
+      .select()
+      .from(schema.questionMarks)
+      .where(
+        and(
+          eq(schema.questionMarks.userId, userId),
+          eq(schema.questionMarks.questionId, questionId),
+        ),
+      )
+      .limit(1);
+    const current = existing[0];
+
+    // 未帶的欄位維持原值，這樣「只切換旗標」不會把註記清掉。
+    const isFlagged = dto.isFlagged ?? current?.isFlagged ?? false;
+    const note = dto.note === undefined ? (current?.note ?? null) : (dto.note?.trim() || null);
+
+    if (!isFlagged && note === null) {
+      if (current) {
+        await db.delete(schema.questionMarks).where(eq(schema.questionMarks.id, current.id));
+      }
+      return this.getOrThrow(userId, questionId);
+    }
+
+    await db
+      .insert(schema.questionMarks)
+      .values({ userId, questionId, isFlagged, note })
+      .onConflictDoUpdate({
+        target: [schema.questionMarks.userId, schema.questionMarks.questionId],
+        set: { isFlagged, note, updatedAt: new Date() },
+      });
+
+    return this.getOrThrow(userId, questionId);
+  }
+
   private async hydrate(db: Database, rows: QuestionRow[]): Promise<QuestionResponse[]> {
     if (rows.length === 0) return [];
 
@@ -370,6 +438,17 @@ export class QuestionsService {
 
     const tagMap = await this.questionTags.loadForQuestions(db, ids);
 
+    const markRows = await db
+      .select({
+        questionId: schema.questionMarks.questionId,
+        isFlagged: schema.questionMarks.isFlagged,
+        note: schema.questionMarks.note,
+        updatedAt: schema.questionMarks.updatedAt,
+      })
+      .from(schema.questionMarks)
+      .where(inArray(schema.questionMarks.questionId, ids));
+    const markMap = new Map(markRows.map((m) => [m.questionId, m]));
+
     return rows.map((row) => {
       const group = groupMap.get(row.questionGroupId);
       return {
@@ -399,6 +478,16 @@ export class QuestionsService {
         status: row.status as QuestionResponse['status'],
         currentVersion: row.currentVersion,
         contentHash: row.contentHash,
+        mark: (() => {
+          const mark = markMap.get(row.id);
+          return mark
+            ? {
+                isFlagged: mark.isFlagged,
+                note: mark.note,
+                updatedAt: mark.updatedAt.toISOString(),
+              }
+            : null;
+        })(),
         knowledgeTags: tagMap.get(row.id)?.knowledgeTags ?? [],
         skillTags: tagMap.get(row.id)?.skillTags ?? [],
         createdAt: row.createdAt.toISOString(),

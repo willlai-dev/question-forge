@@ -107,6 +107,7 @@
 | `POST` | `/questions` | 建立 |
 | `GET` `PATCH` `DELETE` | `/questions/:id` | |
 | `POST` | `/questions/bulk` | 批次操作 |
+| `PUT` | `/questions/:id/mark` | 設定個人標記與註記 |
 | `GET` | `/questions/:id/versions` | 版本歷史 |
 
 `POST /questions` 請求：

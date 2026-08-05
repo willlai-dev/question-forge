@@ -1,4 +1,15 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  Patch,
+  Post,
+  Put,
+  Query,
+} from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   bulkQuestionActionSchema,
@@ -7,6 +18,7 @@ import {
   paginated,
   questionResponseSchema,
   questionVersionResponseSchema,
+  setQuestionMarkSchema,
   updateQuestionSchema,
   uuidSchema,
   type PaginationMeta,
@@ -25,6 +37,7 @@ export class BulkQuestionActionDto extends createZodDto(bulkQuestionActionSchema
 export class QuestionResponseDto extends createZodDto(questionResponseSchema) {}
 export class QuestionListResponseDto extends createZodDto(paginated(questionResponseSchema)) {}
 export class QuestionVersionResponseDto extends createZodDto(questionVersionResponseSchema) {}
+export class SetQuestionMarkDto extends createZodDto(setQuestionMarkSchema) {}
 
 @ApiTags('questions')
 @Controller('questions')
@@ -82,6 +95,23 @@ export class QuestionsController {
     @Param('id', new ZodValidationPipe(uuidSchema)) id: string,
   ): Promise<QuestionResponse> {
     return this.questionsService.getOrThrow(user.id, id);
+  }
+
+  @Put(':id/mark')
+  @ApiOperation({
+    summary: '設定單題的個人標記與註記',
+    description:
+      '與 reviewRequired 是兩件事：那個是「題目本身需要人工複核」（題庫品質），' +
+      '這裡是「我覺得這題重要」（個人學習）。' +
+      '未帶的欄位維持原值；標記與註記都清空時整筆標記會被移除。',
+  })
+  @ApiOkResponse({ type: QuestionResponseDto })
+  setMark(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', new ZodValidationPipe(uuidSchema)) id: string,
+    @Body() dto: SetQuestionMarkDto,
+  ): Promise<QuestionResponse> {
+    return this.questionsService.setMark(user.id, id, dto);
   }
 
   @Get(':id/versions')
