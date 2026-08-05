@@ -1289,3 +1289,67 @@ failed                       → 6 筆，含這個任務的 jobId
 > 過程中一度看到 Phase 3 的種子資料斷言失敗（`n=0`）。那是我在後端**執行中**
 > 重建了測試資料庫——種子是啟動時寫入的，資料庫被抽換後不會自動補回。
 > 重啟後端即恢復。這條在 TEST_PLAN 前面就寫過：先重置資料庫，再啟動後端。
+
+---
+
+## 作答頁的方向鍵切換，以及一個沒有守門員的規則
+
+← ↑ 上一題、→ ↓ 下一題。
+
+### 三個必須守住的邊界
+
+少任何一個，這個功能就會從便利變成干擾：
+
+1. **正在輸入時不能攔。** 註記的 textarea 就在同一頁，
+   搶走方向鍵會讓游標移不動——那比沒有這個功能更糟。
+2. **帶修飾鍵時不能攔。** `Alt+←` 是瀏覽器上一頁、`Cmd/Ctrl+←` 是行首，
+   攔下來等於把使用者既有的習慣弄壞。
+3. **只在真的換題時 `preventDefault`。** 已經在第一題還按 ←，
+   應該讓頁面照常捲動，而不是無聲吃掉那個按鍵。
+
+### 真正的問題：hook 放錯位置，而且沒有任何東西會發現
+
+我第一版把 `useArrowNavigation()` 放在「場次已結束」那個提前 `return` **之後**。
+那違反 Rules of Hooks：場次結束時 hook 數量與進行中時不同，React 會直接拋錯。
+
+- `pnpm typecheck` 過了。
+- `pnpm lint` 過了。
+- 平常也跑不到那個分支——**只有在場次結束的瞬間才會炸**。
+
+原因是整個專案**沒有安裝 `eslint-plugin-react-hooks`**，
+`apps/web` 底下所有 React 程式碼從來沒有經過 hooks 檢查。
+
+### 修正
+
+裝上 `eslint-plugin-react-hooks`，對 `apps/web` 啟用：
+
+```
+'react-hooks/rules-of-hooks': 'error'
+'react-hooks/exhaustive-deps': 'warn'
+```
+
+`lint` 用 `--max-warnings=0`，因此 warn 等級同樣會擋下 CI。
+既有程式碼**零違規**，不需要額外修補。
+
+### 驗證規則真的會抓
+
+把 hook 移回提前 return 之後，確認 lint 失敗：
+
+```
+95:3  error  React Hook "useArrowNavigation" is called conditionally.
+             React Hooks must be called in the exact same order in every component render
+             react-hooks/rules-of-hooks
+```
+
+再改回正確位置確認通過。**沒看過它失敗的規則，不能算守門員。**
+
+### 執行結果
+
+| 情境 | 結果 |
+|---|---|
+| 全新資料庫 | 43 + 73 + 134 + 76 + 123 + 104 = **553 項全過** |
+| 緊接著再跑一次 | **549 項全過** |
+| `pnpm verify` | exit 0，411 個單元測試 |
+
+> 方向鍵本身是前端行為，這個專案沒有 UI 測試，E2E 測不到——這點不假裝有覆蓋。
+> 實際擋住迴歸的是 lint 規則。

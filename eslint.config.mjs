@@ -1,5 +1,6 @@
 import js from '@eslint/js';
 import prettier from 'eslint-config-prettier';
+import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
@@ -42,6 +43,23 @@ export default tseslint.config(
       // NestJS 大量使用 decorator 與空 constructor，關掉會誤報的規則。
       '@typescript-eslint/no-empty-function': ['error', { allow: ['constructors'] }],
       '@typescript-eslint/no-extraneous-class': 'off',
+    },
+  },
+
+  {
+    /*
+     * React Hooks 規則。
+     *
+     * 加這個是因為真的被咬過：一個 hook 被放在提前 return 之後，
+     * typecheck 過、lint 過、平常也跑不到那個分支——只有在場次結束時
+     * hook 數量才會對不上而讓 React 拋錯。這正是 rules-of-hooks 存在的理由，
+     * 而當時整個前端沒有裝任何 hooks 檢查。
+     */
+    files: ['apps/web/**/*.{ts,tsx}'],
+    plugins: { 'react-hooks': reactHooks },
+    rules: {
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
     },
   },
 

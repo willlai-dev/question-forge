@@ -69,15 +69,6 @@ function QuizSessionView() {
     onSuccess: () => router.push(`/quiz/${sessionId}/result`),
   });
 
-  if (session.data && session.data.status !== 'in_progress') {
-    return (
-      <div className="space-y-4">
-        <p className="text-sm text-muted-foreground">此場次已結束。</p>
-        <Button onClick={() => router.push(`/quiz/${sessionId}/result`)}>查看結果</Button>
-      </div>
-    );
-  }
-
   const data = question.data;
   const total = session.data?.totalQuestions ?? data?.totalQuestions ?? 0;
   const reveal = data?.reveal ?? null;
@@ -88,6 +79,20 @@ function QuizSessionView() {
       : submit.error instanceof ApiRequestError
         ? submit.error
         : null;
+
+  // Hook 必須在任何提前 return 之前呼叫。
+  // 放在下面那個「場次已結束」的分支之後，會讓場次結束時的 hook 數量與
+  // 進行中時不同，React 會直接拋錯——而那個分支平常跑不到，很容易漏掉。
+  useArrowNavigation({ position, total, onChange: setPosition });
+
+  if (session.data && session.data.status !== 'in_progress') {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground">此場次已結束。</p>
+        <Button onClick={() => router.push(`/quiz/${sessionId}/result`)}>查看結果</Button>
+      </div>
+    );
+  }
 
   const toggleOption = (key: string) => {
     if (isMultiple) {
@@ -234,6 +239,9 @@ function QuizSessionView() {
         >
           上一題
         </Button>
+        <span className="text-xs text-muted-foreground">
+          方向鍵 ← ↑ / → ↓ 也可以切換（輸入註記時不受影響）
+        </span>
         <Button
           variant="secondary"
           disabled={position >= total}
@@ -244,4 +252,54 @@ function QuizSessionView() {
       </div>
     </div>
   );
+}
+
+/**
+ * 方向鍵切換題目：← ↑ 上一題，→ ↓ 下一題。
+ *
+ * 三個必須守住的邊界，少一個就會變成干擾而不是便利：
+ *
+ *   1. **正在輸入時不能攔。** 註記的 textarea 就在同一頁，
+ *      搶走方向鍵會讓游標移不動——那比沒有這個功能更糟。
+ *   2. **帶修飾鍵時不能攔。** Alt+← 是瀏覽器的上一頁，Cmd/Ctrl+← 是行首，
+ *      攔下來等於把使用者既有的習慣弄壞。
+ *   3. **只在真的換題時 preventDefault。** 已經在第一題還按 ←，
+ *      應該讓頁面照常捲動，而不是無聲吃掉那個按鍵。
+ */
+function useArrowNavigation(options: {
+  position: number;
+  total: number;
+  onChange: (position: number) => void;
+}): void {
+  const { position, total, onChange } = options;
+
+  useEffect(() => {
+    const isTyping = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      if (target.isContentEditable) return true;
+      return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+    };
+
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (isTyping(event.target)) return;
+
+      const delta =
+        event.key === 'ArrowLeft' || event.key === 'ArrowUp'
+          ? -1
+          : event.key === 'ArrowRight' || event.key === 'ArrowDown'
+            ? 1
+            : 0;
+      if (delta === 0) return;
+
+      const next = position + delta;
+      if (next < 1 || next > total) return;
+
+      event.preventDefault();
+      onChange(next);
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [position, total, onChange]);
 }
