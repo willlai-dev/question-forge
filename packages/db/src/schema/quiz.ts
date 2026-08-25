@@ -50,6 +50,15 @@ export const quizSessions = pgTable(
     answeredCount: integer('answered_count').notNull().default(0),
     correctCount: integer('correct_count').notNull().default(0),
     score: numeric('score', { precision: 5, scale: 2 }),
+    /**
+     * 分數用什麼當分母。交卷時由使用者決定，寫進場次以保證日後重看時數字一致。
+     *
+     * `all_questions`：總題數，未作答視同答錯（模擬考的算法）。
+     * `answered_only`：只算實際作答的題數，時間不夠提早交卷時用。
+     *
+     * 交卷前為 null——還沒交卷就沒有分數，也就沒有分母可言。
+     */
+    scoringMode: text('scoring_mode'),
     startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
     submittedAt: timestamp('submitted_at', { withTimezone: true }),
     durationMs: integer('duration_ms'),
@@ -73,6 +82,15 @@ export const quizSessions = pgTable(
     check(
       'quiz_sessions_question_limit_check',
       sql`${t.questionLimit} is null or ${t.questionLimit} > 0`,
+    ),
+    check(
+      'quiz_sessions_scoring_mode_check',
+      sql`${t.scoringMode} is null or ${t.scoringMode} in ('all_questions', 'answered_only')`,
+    ),
+    // 交卷才有分數，有分數就一定要說得出分母。
+    check(
+      'quiz_sessions_scoring_mode_consistency_check',
+      sql`(${t.score} is null) = (${t.scoringMode} is null)`,
     ),
     index('quiz_sessions_user_started_idx').on(t.userId, t.startedAt.desc()),
     index('quiz_sessions_user_status_idx').on(t.userId, t.status),

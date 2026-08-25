@@ -14,6 +14,8 @@ import {
   type QuizResultResponse,
   type QuizReveal,
   type QuizSessionResponse,
+  type ScoringMode,
+  type SubmitQuizSessionRequest,
   type SubmitAnswerRequest,
   type SubmitAnswerResponse,
   type UpdateAnswerRequest,
@@ -782,17 +784,37 @@ export class QuizSessionsService {
 
   // ------------------------------------------------------------ 交卷與結果
 
-  async submit(userId: string, sessionId: string): Promise<QuizResultResponse> {
+  /**
+   * 交卷。
+   *
+   * `scoringMode` 決定分數的**分母**：
+   *   - `all_questions`：總題數，未作答視同答錯。模擬考的算法，也是預設。
+   *   - `answered_only`：只算實際作答的題數。時間不夠而提早交卷時，
+   *     這樣才看得出「我作答的部分表現如何」，而不是被沒空看的題目拉低。
+   *
+   * 兩種模式都**不影響**儀表板與學習診斷：那些數字一律由 `user_answers` 推導，
+   * 沒作答的題目本來就不在那張表裡。這裡改的只有這一場的分數怎麼呈現。
+   *
+   * 選擇會寫進場次，日後重看結果頁時分數與當初一致，不會因為預設值變了而漂移。
+   */
+  async submit(
+    userId: string,
+    sessionId: string,
+    dto: SubmitQuizSessionRequest,
+  ): Promise<QuizResultResponse> {
     const session = await this.loadSessionRow(userId, sessionId);
     this.assertInProgress(session);
 
     const now = new Date();
     await this.database.db.transaction(async (tx) => {
       const counters = await this.refreshSessionCounters(tx, sessionId);
+      const denominator =
+        dto.scoringMode === 'answered_only' ? counters.answeredCount : session.totalQuestions;
+      // 分母為 0 時回 0 而不是除以零：一題都沒作答就選 answered_only 會落在這裡。
       const score =
-        session.totalQuestions === 0
+        denominator === 0
           ? 0
-          : Math.round((counters.correctCount / session.totalQuestions) * 10000) / 100;
+          : Math.round((counters.correctCount / denominator) * 10000) / 100;
 
       await tx
         .update(schema.quizSessions)
@@ -801,6 +823,7 @@ export class QuizSessionsService {
           submittedAt: now,
           durationMs: now.getTime() - session.startedAt.getTime(),
           score: score.toFixed(2),
+          scoringMode: dto.scoringMode,
           updatedAt: now,
         })
         .where(eq(schema.quizSessions.id, sessionId));
@@ -935,6 +958,11 @@ export class QuizSessionsService {
 
     const [hydratedSession] = await this.hydrateSessions([session]);
 
+    // 交卷前（immediate 模式中途查看）沒有記錄過分母，按總題數呈現。
+    const scoringMode = (session.scoringMode as ScoringMode | null) ?? 'all_questions';
+    const scoreDenominator =
+      scoringMode === 'answered_only' ? answeredCount : session.totalQuestions;
+
     return {
       session: hydratedSession!,
       totalQuestions: session.totalQuestions,
@@ -942,11 +970,14 @@ export class QuizSessionsService {
       correctCount,
       incorrectCount: answeredCount - correctCount,
       unansweredCount: session.totalQuestions - answeredCount,
-      // 未作答視同答錯：分數要反映「這份試卷的表現」，而不是只算做過的題目。
-      score:
-        session.totalQuestions === 0
-          ? 0
-          : Math.round((correctCount / session.totalQuestions) * 10000) / 100,
+      scoringMode,
+      // 用交卷時記下的分母重算，而不是固定用總題數——
+      // 否則選了 answered_only 的場次，結果頁的分數會與交卷當下存下來的不一致。
+      // 尚未交卷（immediate 模式中途查看）時沒有分母可言，先按總題數呈現。
+      score: scoreDenominator === 0
+        ? 0
+        : Math.round((correctCount / scoreDenominator) * 10000) / 100,
+      // 正確率一律是「答對 ÷ 實際作答」，與計分方式無關。
       accuracy:
         answeredCount === 0 ? 0 : Math.round((correctCount / answeredCount) * 10000) / 100,
       durationMs: session.durationMs,
@@ -1082,6 +1113,7 @@ export class QuizSessionsService {
         // after_submit 模式在交卷前不得回傳答對題數：那個數字本身就是答案的洩漏管道。
         correctCount: finished || row.revealMode === 'immediate' ? row.correctCount : null,
         score: row.score === null ? null : Number(row.score),
+        scoringMode: (row.scoringMode as ScoringMode | null) ?? null,
         scopes: (scopesBySession.get(row.id) ?? []).map((scope) => ({
           scopeType: scope.scopeType as QuizSessionResponse['scopes'][number]['scopeType'],
           refId: scope.refId,

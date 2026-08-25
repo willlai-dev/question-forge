@@ -26,6 +26,21 @@ export type OrderStrategy = z.infer<typeof orderStrategySchema>;
 export const revealModeSchema = z.enum(['immediate', 'after_submit']);
 export type RevealMode = z.infer<typeof revealModeSchema>;
 
+/**
+ * 交卷時分數的分母要用什麼。
+ *
+ * - `all_questions`：分母是這個場次的總題數。未作答等同答錯——這是模擬考的計分方式。
+ * - `answered_only`：分母只算實際作答過的題數，未作答的題目完全不計入。
+ *   時間不夠而提早交卷時用這個，才能看到「我作答的部分表現如何」，
+ *   而不是被一堆沒空看的題目把分數拉低。
+ *
+ * 兩者都**不影響**儀表板與學習診斷的統計：那些數字一律由 `user_answers` 推導，
+ * 沒作答的題目本來就不存在於那張表，不會因為這個選擇而改變。
+ * 這裡調整的只有「這一場的分數」怎麼呈現。
+ */
+export const scoringModeSchema = z.enum(['all_questions', 'answered_only']);
+export type ScoringMode = z.infer<typeof scoringModeSchema>;
+
 export const quizSessionStatusSchema = z.enum(['in_progress', 'submitted', 'abandoned']);
 export type QuizSessionStatus = z.infer<typeof quizSessionStatusSchema>;
 
@@ -109,6 +124,8 @@ export const quizSessionResponseSchema = z.object({
    */
   correctCount: z.number().int().nullable(),
   score: z.number().nullable(),
+  /** 這個分數是用哪一種分母算的。交卷後才有值。 */
+  scoringMode: scoringModeSchema.nullable(),
   scopes: z.array(quizScopeResponseSchema),
   startedAt: z.string().datetime(),
   submittedAt: z.string().datetime().nullable(),
@@ -261,6 +278,22 @@ export const quizResultItemSchema = z.object({
 });
 export type QuizResultItem = z.infer<typeof quizResultItemSchema>;
 
+/**
+ * 交卷。
+ *
+ * `scoringMode` 只在有未作答題目時才有差別；全部作答完的話兩種算法結果相同。
+ * 省略時維持 `all_questions`，也就是舊有行為。
+ */
+export const submitQuizSessionSchema = z
+  .object({
+    scoringMode: scoringModeSchema.default('all_questions'),
+  })
+  .strict()
+  // 整個 body 可以不帶。交卷原本就是沒有 body 的 POST，
+  // 若要求必須帶物件，等於讓舊的呼叫方式全部變成 400。
+  .default({ scoringMode: 'all_questions' });
+export type SubmitQuizSessionRequest = z.infer<typeof submitQuizSessionSchema>;
+
 export const quizResultResponseSchema = z.object({
   session: quizSessionResponseSchema,
   totalQuestions: z.number().int(),
@@ -268,8 +301,14 @@ export const quizResultResponseSchema = z.object({
   correctCount: z.number().int(),
   incorrectCount: z.number().int(),
   unansweredCount: z.number().int(),
-  /** 0～100，答對題數 ÷ 總題數。未作答視同答錯。 */
+  /** 這一場採用的計分方式。 */
+  scoringMode: scoringModeSchema,
+  /**
+   * 0～100。分母取決於 `scoringMode`：
+   * `all_questions` 用總題數（未作答視同答錯），`answered_only` 只用實際作答的題數。
+   */
   score: z.number(),
+  /** 答對 ÷ 實際作答，與 scoringMode 無關。全部未作答時為 0。 */
   accuracy: z.number(),
   durationMs: z.number().int().nullable(),
   averageResponseTimeMs: z.number().int().nullable(),

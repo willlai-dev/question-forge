@@ -24,6 +24,7 @@ import {
   QuizSessionResponseDto,
   SubmitAnswerDto,
   SubmitAnswerResponseDto,
+  SubmitQuizSessionDto,
   UpdateAnswerDto,
 } from './quiz.dto';
 import { QuizSessionsService } from './quiz-sessions.service';
@@ -142,13 +143,21 @@ export class QuizSessionsController {
 
   @Post(':id/submit')
   @HttpCode(200)
-  @ApiOperation({ summary: '交卷', description: '交卷後未作答的題目標記為 skipped。' })
+  @ApiOperation({
+    summary: '交卷',
+    description:
+      '交卷後未作答的題目標記為 skipped。' +
+      'scoringMode 決定分數的分母：all_questions（預設，未作答視同答錯）' +
+      '或 answered_only（只算實際作答的題數，時間不夠提早交卷時用）。' +
+      '兩者都不影響儀表板與學習診斷——那些統計一律由 user_answers 推導。',
+  })
   @ApiOkResponse({ type: QuizResultResponseDto })
   submit(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', new ZodValidationPipe(uuidSchema)) id: string,
+    @Body() dto: SubmitQuizSessionDto,
   ): Promise<QuizResultResponse> {
-    return this.quizSessions.submit(user.id, id);
+    return this.quizSessions.submit(user.id, id, dto);
   }
 
   @Get(':id/result')

@@ -249,9 +249,29 @@ partially_valid → committing → partially_valid   （部分題組匯入，其
 | `GET` | `/quiz-sessions/:id/questions/:position` | 取單題（**選項已依 `option_order` 排好**） |
 | `POST` | `/quiz-sessions/:id/answers` | 作答 |
 | `PATCH` | `/quiz-sessions/:id/answers/:answerId` | 修改答案 |
-| `POST` | `/quiz-sessions/:id/submit` | 交卷 |
+| `POST` | `/quiz-sessions/:id/submit` | 交卷。body 可省略；帶 `scoringMode` 可決定分數的分母 |
 | `GET` | `/quiz-sessions/:id/result` | 結果 |
 | `POST` | `/quiz-sessions/:id/abandon` | 放棄 |
+
+### 交卷的計分方式
+
+```json
+{ "scoringMode": "answered_only" }
+```
+
+| 值 | 分數的分母 | 用途 |
+|---|---|---|
+| `all_questions`（預設） | 場次總題數，未作答視同答錯 | 模擬考 |
+| `answered_only` | 實際作答的題數 | 時間不夠提早交卷，只想看作答部分的表現 |
+
+三件要記住的事：
+
+1. **body 可以完全省略**，等同 `all_questions`——交卷原本就是沒有 body 的 POST。
+2. 選擇會寫進 `quiz_sessions.scoring_mode`，`GET /result` 用它重算，
+   因此日後重看的分數與交卷當下一致，不會因為預設值改變而漂移。
+3. **兩種模式都不影響儀表板與學習診斷**。那些統計一律由 `user_answers` 推導，
+   未作答的題目本來就不在那張表裡。回應中的 `accuracy` 同理，
+   一律是「答對 ÷ 實際作答」，與 `scoringMode` 無關——會變的只有 `score`。
 
 `POST /quiz-sessions` 請求：
 

@@ -12,6 +12,7 @@ import {
   quizSessionResponseSchema,
   submitAnswerResponseSchema,
   submitAnswerSchema,
+  submitQuizSessionSchema,
   updateAnswerSchema,
 } from '@repo/contracts';
 import { createZodDto } from 'nestjs-zod';
@@ -21,6 +22,7 @@ import { createZodDto } from 'nestjs-zod';
 export class CreateQuizSessionDto extends createZodDto(createQuizSessionSchema) {}
 export class ListQuizSessionsQueryDto extends createZodDto(listQuizSessionsQuerySchema) {}
 export class SubmitAnswerDto extends createZodDto(submitAnswerSchema) {}
+export class SubmitQuizSessionDto extends createZodDto(submitQuizSessionSchema) {}
 export class UpdateAnswerDto extends createZodDto(updateAnswerSchema) {}
 export class QuizSessionResponseDto extends createZodDto(quizSessionResponseSchema) {}
 export class QuizQuestionResponseDto extends createZodDto(quizQuestionResponseSchema) {}

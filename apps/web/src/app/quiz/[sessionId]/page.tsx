@@ -74,14 +74,20 @@ function QuizSessionView() {
   });
 
   const submit = useMutation({
-    mutationFn: () => api.post(`/quiz-sessions/${sessionId}/submit`),
+    mutationFn: (scoringMode: 'all_questions' | 'answered_only') =>
+      api.post(`/quiz-sessions/${sessionId}/submit`, { scoringMode }),
     onSuccess: () => router.push(`/quiz/${sessionId}/result`),
   });
+
+  // 還有題目沒作答時先問計分方式；全部作答完的話兩種算法結果相同，不需要多問一步。
+  const [confirmingSubmit, setConfirmingSubmit] = useState(false);
 
   const data = question.data;
   const total = session.data?.totalQuestions ?? data?.totalQuestions ?? 0;
   const reveal = data?.reveal ?? null;
   const isMultiple = data?.type === 'multiple_choice';
+  const answeredCount = session.data?.answeredCount ?? 0;
+  const unansweredCount = Math.max(0, total - answeredCount);
   const error =
     answer.error instanceof ApiRequestError
       ? answer.error
@@ -132,10 +138,14 @@ function QuizSessionView() {
 
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight">
+    <div className="space-y-5 sm:space-y-6">
+      {/*
+        手機上標題與操作分成兩列：導覽鈕加交卷鈕擠在標題右邊會被壓成
+        兩個窄到看不出字的方塊。改成標題一列、操作一列，寬度就夠了。
+      */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-lg font-bold tracking-tight sm:text-xl">
             第 {position} / {total} 題
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -147,11 +157,62 @@ function QuizSessionView() {
         </div>
         <div className="flex items-center gap-2">
           <QuestionNavigator sessionId={sessionId} position={position} onJump={setPosition} />
-          <Button variant="secondary" onClick={() => submit.mutate()} disabled={submit.isPending}>
+          <Button
+            variant="secondary"
+            className="shrink-0"
+            onClick={() => {
+              if (unansweredCount > 0) setConfirmingSubmit(true);
+              else submit.mutate('all_questions');
+            }}
+            disabled={submit.isPending}
+          >
             {submit.isPending ? '交卷中…' : '交卷'}
           </Button>
         </div>
       </div>
+
+      {confirmingSubmit && (
+        <Card>
+          <h2 className="text-base font-semibold">還有 {unansweredCount} 題沒有作答</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            選擇這一場的分數要怎麼算。無論選哪一個，
+            <strong className="font-medium">未作答的題目都不會進入錯題本或學習診斷</strong>
+            ——那些統計本來就只看實際作答的紀錄。這裡只影響這一場的分數。
+          </p>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <button
+              type="button"
+              className="rounded-md border p-3 text-left transition-colors hover:border-primary hover:bg-muted/40"
+              onClick={() => submit.mutate('answered_only')}
+              disabled={submit.isPending}
+            >
+              <span className="block text-sm font-medium">只算我作答的部分</span>
+              <span className="mt-1 block text-xs text-muted-foreground">
+                分母是已作答的 {answeredCount} 題。時間不夠提早交卷時用這個。
+              </span>
+            </button>
+
+            <button
+              type="button"
+              className="rounded-md border p-3 text-left transition-colors hover:border-primary hover:bg-muted/40"
+              onClick={() => submit.mutate('all_questions')}
+              disabled={submit.isPending}
+            >
+              <span className="block text-sm font-medium">未作答算答錯</span>
+              <span className="mt-1 block text-xs text-muted-foreground">
+                分母是全部 {total} 題。模擬考的算法。
+              </span>
+            </button>
+          </div>
+
+          <div className="mt-3">
+            <Button variant="secondary" onClick={() => setConfirmingSubmit(false)}>
+              先不交卷
+            </Button>
+          </div>
+        </Card>
+      )}
 
       <div className="h-1.5 overflow-hidden rounded-full bg-muted">
         <div
@@ -164,8 +225,12 @@ function QuizSessionView() {
         暫存指令一定要看得見。按了 M 之後數字鍵的意義就變了，
         沒有提示的話使用者只會覺得「選項怎麼選不動」。
       */}
+      {/*
+        手機的底部有固定的上一題／下一題列，提示要往上讓開，
+        否則兩者會疊在一起互相遮住。桌機沒有那條列，維持原本的位置。
+      */}
       {pending.kind !== 'none' && (
-        <div className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2 rounded-full border bg-background px-4 py-2 text-sm shadow-lg">
+        <div className="fixed bottom-20 left-1/2 z-40 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-full border bg-background px-4 py-2 text-center text-sm shadow-lg sm:bottom-4">
           {pending.kind === 'jump' ? (
             <>
               {pending.digits === '' ? (
@@ -217,19 +282,25 @@ function QuizSessionView() {
                   type="button"
                   onClick={() => toggleOption(option.key)}
                   className={cn(
-                    'flex w-full items-start gap-3 rounded-md border px-4 py-3 text-left text-sm transition',
+                    // 選項是這一頁最主要的點擊目標，手機上內距要夠：
+                    // min-h-11 保證即使選項只有一兩個字也還是按得到。
+                    'flex w-full items-start gap-2 rounded-md border px-3 py-3 text-left text-sm transition sm:gap-3 sm:px-4',
+                    'min-h-11',
                     picked ? 'border-primary bg-accent' : 'hover:bg-accent/50',
                     // 只有在後端真的回傳 reveal 時才上色 —— 前端不自行推測答案。
                     reveal && isAnswerKey && 'border-emerald-500 bg-emerald-50',
                     reveal && picked && !isAnswerKey && 'border-destructive bg-destructive/5',
                   )}
                 >
-                  {/* 數字鍵對應的是畫面順序，因此提示也放在畫面順序上。 */}
-                  <span className="w-4 shrink-0 font-mono text-xs text-muted-foreground">
+                  {/*
+                    數字鍵對應的是畫面順序，因此提示也放在畫面順序上。
+                    手機沒有實體鍵盤，這個提示只是在吃掉本來就不夠的寬度，因此隱藏。
+                  */}
+                  <span className="hidden w-4 shrink-0 font-mono text-xs text-muted-foreground sm:inline">
                     {index < 9 ? index + 1 : ''}
                   </span>
-                  <span className="font-medium">{option.key}</span>
-                  <span className="flex-1 whitespace-pre-wrap">{option.text}</span>
+                  <span className="shrink-0 font-medium">{option.key}</span>
+                  <span className="min-w-0 flex-1 whitespace-pre-wrap">{option.text}</span>
                 </button>
               );
             })}
@@ -241,8 +312,9 @@ function QuizSessionView() {
           */}
           <QuestionMarkControl questionId={data.questionId} mark={data.mark} />
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <Button
+              className="w-full sm:w-auto"
               onClick={() => answer.mutate()}
               disabled={selected.length === 0 || answer.isPending}
             >
@@ -298,19 +370,36 @@ function QuizSessionView() {
         </Card>
       )}
 
-      <div className="flex items-center justify-between">
+      {/*
+        換題列在手機上固定在底部。
+        題目 + 選項 + AI 解析加起來動輒好幾屏，換題鈕跟著捲到最下面的話，
+        每答完一題都得先把整頁捲到底才能繼續——那是作答時最頻繁的動作。
+        桌機維持原本的靜態排列（有鍵盤方向鍵，不需要常駐按鈕）。
+      */}
+      <div
+        className={cn(
+          'sticky bottom-0 z-20 -mx-4 flex items-center justify-between gap-3 border-t bg-background/95 px-4 pb-safe pt-3 backdrop-blur',
+          'sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 sm:pb-0 sm:pt-0 sm:backdrop-blur-none',
+        )}
+      >
         <Button
           variant="secondary"
+          className="min-w-24 flex-1 sm:flex-none"
           disabled={position <= 1}
           onClick={() => setPosition((p) => p - 1)}
         >
           上一題
         </Button>
-        <span className="text-xs text-muted-foreground">
+        {/* 快捷鍵說明對沒有實體鍵盤的裝置沒有意義，只會佔掉版面。 */}
+        <span className="hidden text-xs text-muted-foreground sm:inline">
           ←↑ / →↓ 換題．數字選選項．Enter 送出．E→Enter 分析．M→題號→Enter 跳題．M→M 跳未作答
+        </span>
+        <span className="text-xs tabular-nums text-muted-foreground sm:hidden">
+          {position} / {total}
         </span>
         <Button
           variant="secondary"
+          className="min-w-24 flex-1 sm:flex-none"
           disabled={position >= total}
           onClick={() => setPosition((p) => p + 1)}
         >

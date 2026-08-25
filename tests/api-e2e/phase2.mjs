@@ -557,11 +557,64 @@ const run = async () => {
     unansweredItems.every((item) => item.answerId === null));
   const scored = await call('POST', `/quiz-sessions/${sid}/submit`, undefined, H());
   check('交卷回傳完整結果', scored.status === 200 && scored.body.items.length === 6);
+  check('省略 scoringMode 時維持舊有行為（all_questions）',
+    scored.body.scoringMode === 'all_questions', String(scored.body.scoringMode));
   const expectedScore = Math.round((scored.body.correctCount / 6) * 10000) / 100;
   check('得分 = 答對數 ÷ 總題數', scored.body.score === expectedScore,
     `score=${scored.body.score} expected=${expectedScore}`);
   check('作答正確率以已作答題數為分母',
     scored.body.accuracy === Math.round((scored.body.correctCount / scored.body.answeredCount) * 10000) / 100);
+  check('場次本身也記下計分方式',
+    (await call('GET', `/quiz-sessions/${sid}`)).body.scoringMode === 'all_questions');
+
+  // ---- 提早交卷：只算作答過的部分 ----
+  console.log('\n=== 交卷計分方式：可選擇未作答題目算不算 ===');
+  const partialSession = await call('POST', '/quiz-sessions',
+    { scopes: [{ scopeType: 'question_group', refId: group.body.id }] }, H());
+  const partialId = partialSession.body.id;
+  const partialTotal = partialSession.body.totalQuestions;
+  check('新場次題數大於 2（才有未作答的題目可測）', partialTotal > 2, `total=${partialTotal}`);
+
+  // 只答前兩題：第 1 題答對、第 2 題答錯。
+  const p1 = await call('GET', `/quiz-sessions/${partialId}/questions/1`);
+  await call('POST', `/quiz-sessions/${partialId}/answers`,
+    { sessionQuestionId: p1.body.sessionQuestionId, selectedAnswers: ['B'] }, H());
+  const p2 = await call('GET', `/quiz-sessions/${partialId}/questions/2`);
+  await call('POST', `/quiz-sessions/${partialId}/answers`,
+    { sessionQuestionId: p2.body.sessionQuestionId, selectedAnswers: ['A'] }, H());
+
+  const earlySubmit = await call('POST', `/quiz-sessions/${partialId}/submit`,
+    { scoringMode: 'answered_only' }, H());
+  check('可指定只算作答過的部分', partial.status === 200, `status=${partial.status}`);
+  check('回應標明計分方式', earlySubmit.body.scoringMode === 'answered_only',
+    String(earlySubmit.body.scoringMode));
+  check('已作答 2 題', earlySubmit.body.answeredCount === 2, String(earlySubmit.body.answeredCount));
+  check('未作答題數正確', earlySubmit.body.unansweredCount === partialTotal - 2,
+    String(earlySubmit.body.unansweredCount));
+  check('**分母是已作答題數，不是總題數**',
+    earlySubmit.body.score === Math.round((earlySubmit.body.correctCount / 2) * 10000) / 100,
+    `score=${earlySubmit.body.score} correct=${earlySubmit.body.correctCount}`);
+  // 這是這個功能的重點：未作答的題目不該把分數拉低。
+  check('**未作答的題目沒有把分數拉低**',
+    earlySubmit.body.score > Math.round((earlySubmit.body.correctCount / partialTotal) * 10000) / 100,
+    `answered_only=${earlySubmit.body.score} vs all_questions=${Math.round((earlySubmit.body.correctCount / partialTotal) * 10000) / 100}`);
+  check('正確率與計分方式無關（一律以已作答為分母）',
+    earlySubmit.body.accuracy === Math.round((earlySubmit.body.correctCount / 2) * 10000) / 100,
+    String(earlySubmit.body.accuracy));
+
+  // 重看結果頁時分數必須與交卷當下一致，不能因為預設值而漂移。
+  const earlyAgain = await call('GET', `/quiz-sessions/${partialId}/result`);
+  check('**重看結果頁的分數與交卷當下一致**',
+    earlyAgain.body.score === earlySubmit.body.score,
+    `${earlySubmit.body.score} → ${earlyAgain.body.score}`);
+  check('重看結果頁的計分方式也一致',
+    earlyAgain.body.scoringMode === 'answered_only');
+  check('場次列表也帶出計分方式',
+    (await call('GET', `/quiz-sessions/${partialId}`)).body.scoringMode === 'answered_only');
+
+  check('不合法的 scoringMode → 400',
+    (await call('POST', `/quiz-sessions/${partialId}/submit`, { scoringMode: 'nonsense' }, H()))
+      .status === 400);
   check('有記錄總作答時間', typeof scored.body.durationMs === 'number');
   check('有記錄平均作答時間', typeof scored.body.averageResponseTimeMs === 'number');
 

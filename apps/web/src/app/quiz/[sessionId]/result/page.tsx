@@ -45,21 +45,30 @@ function QuizResultView() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">作答結果</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">作答結果</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {new Date(data.session.startedAt).toLocaleString('zh-TW')}
             {data.session.status === 'abandoned' && '（已放棄）'}
           </p>
         </div>
-        <Link href="/quiz/new">
-          <Button>再練一次</Button>
+        <Link href="/quiz/new" className="shrink-0">
+          <Button className="w-full sm:w-auto">再練一次</Button>
         </Link>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-4">
-        <Stat label="得分" value={`${data.score}`} hint="未作答視同答錯" />
+      {/* 統計卡在手機排兩欄：單欄要捲四次才看得完四個數字。 */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Stat
+          label="得分"
+          value={`${data.score}`}
+          hint={
+            data.scoringMode === 'answered_only'
+              ? `只算作答的 ${data.answeredCount} 題`
+              : '未作答視同答錯'
+          }
+        />
         <Stat label="答對" value={`${data.correctCount} / ${data.totalQuestions}`} />
         <Stat
           label="作答正確率"
@@ -80,13 +89,15 @@ function QuizResultView() {
       <div className="space-y-3">
         {data.items.map((item) => (
           <Card key={item.sessionQuestionId} className="space-y-4">
-            <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start justify-between gap-3 sm:gap-4">
               <div className="min-w-0">
                 <p className="text-xs text-muted-foreground">
                   第 {item.position} 題 · {item.subjectName}
                   {item.chapterName ? ` · ${item.chapterName}` : ''} · {item.questionGroupName}
                 </p>
-                <p className="mt-2 whitespace-pre-wrap leading-relaxed">{item.stem}</p>
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed sm:text-base">
+                  {item.stem}
+                </p>
               </div>
               <ResultBadge isCorrect={item.isCorrect} />
             </div>
@@ -98,15 +109,15 @@ function QuizResultView() {
                   <div
                     key={option.key}
                     className={cn(
-                      'flex items-start gap-3 rounded-md border px-3 py-2 text-sm',
+                      'flex items-start gap-2 rounded-md border px-3 py-2 text-sm sm:gap-3',
                       // isCorrect 為 null 代表「還不該揭曉」，不是「這個選項是錯的」。
                       // 少了 === 判斷，未揭曉的題目會把使用者選的那項標成紅色。
                       option.isCorrect === true && 'border-emerald-500 bg-emerald-50',
                       picked && option.isCorrect === false && 'border-destructive bg-destructive/5',
                     )}
                   >
-                    <span className="font-medium">{option.key}</span>
-                    <span className="flex-1 whitespace-pre-wrap">{option.text}</span>
+                    <span className="shrink-0 font-medium">{option.key}</span>
+                    <span className="min-w-0 flex-1 whitespace-pre-wrap">{option.text}</span>
                     {picked && <span className="shrink-0 text-xs text-muted-foreground">你選的</span>}
                   </div>
                 );
