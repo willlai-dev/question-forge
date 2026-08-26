@@ -61,15 +61,17 @@ function AiJobsView() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">AI 任務</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">AI 任務</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             分析是非同步執行的。失敗的任務可以重跑，執行中的可以取消。
           </p>
         </div>
-        <Link href="/ai/usage">
-          <Button variant="secondary">用量統計</Button>
+        <Link href="/ai/usage" className="shrink-0">
+          <Button variant="secondary" className="w-full sm:w-auto">
+            用量統計
+          </Button>
         </Link>
       </div>
 
@@ -100,7 +102,7 @@ function AiJobsView() {
           const step = AI_PROGRESS_STEPS[job.progressStep];
           return (
             <Card key={job.id} className="space-y-3">
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start justify-between gap-3 sm:gap-4">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">
                     {JOB_TYPE_LABEL[job.jobType] ?? job.jobType}
@@ -131,7 +133,7 @@ function AiJobsView() {
                 </p>
               )}
 
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {job.questionId && (
                   <Link href={`/questions/${job.questionId}/edit`}>
                     <Button variant="ghost">查看題目</Button>

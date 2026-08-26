@@ -10,11 +10,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
-import { Button, Card, ErrorBanner, Field } from '@/components/ui';
+import { Button, Card, ErrorBanner, Field, selectClass } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
-
-const selectClass =
-  'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 interface QuestionTags {
   knowledgeTags: QuestionTagResponse[];
@@ -167,8 +164,13 @@ export function QuestionTagsEditor({ questionId }: { questionId: string }) {
         ))}
       </div>
 
-      <div className="flex items-center gap-3">
-        <Button type="button" onClick={() => save.mutate()} disabled={save.isPending}>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          type="button"
+          className="w-full sm:w-auto"
+          onClick={() => save.mutate()}
+          disabled={save.isPending}
+        >
           {save.isPending ? '儲存中…' : '儲存標籤'}
         </Button>
         {saved && <span className="text-sm text-emerald-700">已儲存</span>}

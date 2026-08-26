@@ -37,11 +37,11 @@ export default function LoginPage() {
   const serverError = mutation.error instanceof ApiRequestError ? mutation.error : null;
 
   return (
-    <main className="mx-auto max-w-md px-6 py-16">
+    <main className="mx-auto max-w-md px-4 py-12 sm:px-6 sm:py-16">
       <h1 className="text-2xl font-bold tracking-tight">登入</h1>
       <p className="mt-2 text-sm text-muted-foreground">題庫分析系統</p>
 
-      <Card className="mt-8">
+      <Card className="mt-6 sm:mt-8">
         <form
           className="space-y-5"
           onSubmit={form.handleSubmit((values) => mutation.mutate(values))}

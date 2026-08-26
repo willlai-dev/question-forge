@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 
 import { AppShell } from '@/components/app-shell';
-import { Button, Card, EmptyState } from '@/components/ui';
+import { Button, Card, EmptyState, selectClass } from '@/components/ui';
 import { api } from '@/lib/api-client';
 import { QUIZ_MODE_LABEL, QUIZ_STATUS_LABEL } from '@/lib/labels';
 import { cn } from '@/lib/utils';
@@ -18,9 +18,6 @@ export default function QuizSessionsPage() {
     </AppShell>
   );
 }
-
-const selectClass =
-  'h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 function QuizSessionsView() {
   const [page, setPage] = useState(1);
@@ -42,20 +39,20 @@ function QuizSessionsView() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">作答場次</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">作答場次</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             未交卷的場次可以隨時回去接著作答。
           </p>
         </div>
-        <Link href="/quiz/new">
-          <Button>開始作答</Button>
+        <Link href="/quiz/new" className="shrink-0">
+          <Button className="w-full sm:w-auto">開始作答</Button>
         </Link>
       </div>
 
       <select
-        className={selectClass}
+        className={cn(selectClass, 'sm:max-w-xs')}
         value={status}
         onChange={(e) => {
           setStatus(e.target.value);
@@ -79,7 +76,7 @@ function QuizSessionsView() {
             session.status === 'in_progress' ? `/quiz/${session.id}` : `/quiz/${session.id}/result`;
           return (
             <Link key={session.id} href={href} className="block">
-              <Card className="flex items-center gap-4 p-4 transition hover:bg-accent/40">
+              <Card className="flex items-start gap-3 p-4 transition hover:bg-accent/40 sm:items-center sm:gap-4">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">
                     {QUIZ_MODE_LABEL[session.mode] ?? session.mode}．{session.totalQuestions} 題

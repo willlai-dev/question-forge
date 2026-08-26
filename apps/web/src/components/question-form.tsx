@@ -5,8 +5,9 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
-import { Button, Card, ErrorBanner, Field, Input } from '@/components/ui';
+import { Button, Card, ErrorBanner, Field, Input, selectClass, textareaClass } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
+import { cn } from '@/lib/utils';
 
 interface OptionDraft {
   key: string;
@@ -22,9 +23,6 @@ const emptyOptions = (): OptionDraft[] => [
   { key: 'C', text: '', isCorrect: false },
   { key: 'D', text: '', isCorrect: false },
 ];
-
-const selectClass =
-  'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 /** 題目新增與編輯共用的表單。單選／複選的答案規則在送出前先於前端提示。 */
 export function QuestionForm({ existing }: { existing?: QuestionResponse }) {
@@ -142,6 +140,7 @@ export function QuestionForm({ existing }: { existing?: QuestionResponse }) {
             <Input
               type="number"
               min={1}
+              inputMode="numeric"
               value={questionNumber}
               onChange={(e) => setQuestionNumber(e.target.value)}
             />
@@ -150,7 +149,7 @@ export function QuestionForm({ existing }: { existing?: QuestionResponse }) {
 
         <Field label="題幹">
           <textarea
-            className="min-h-24 w-full rounded-md border border-input bg-background p-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className={cn(textareaClass, 'min-h-24')}
             value={stem}
             onChange={(e) => setStem(e.target.value)}
             placeholder="輸入完整題幹"
@@ -159,7 +158,7 @@ export function QuestionForm({ existing }: { existing?: QuestionResponse }) {
       </Card>
 
       <Card className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <h2 className="font-medium">選項與答案</h2>
           <span className="text-xs text-muted-foreground">
             {type === 'single_choice' ? '單選：勾選一個正確答案' : '複選：勾選至少兩個正確答案'}
@@ -167,16 +166,23 @@ export function QuestionForm({ existing }: { existing?: QuestionResponse }) {
         </div>
 
         {options.map((option, index) => (
-          <div key={option.key} className="flex items-center gap-3">
-            <span className="w-6 text-sm font-medium">{option.key}</span>
-            <Input
-              value={option.text}
-              onChange={(e) => setOption(index, { text: e.target.value })}
-              placeholder={`選項 ${option.key} 的內容`}
-            />
+          <div key={option.key} className="flex items-center gap-2 sm:gap-3">
+            <span className="w-4 shrink-0 text-sm font-medium sm:w-6">{option.key}</span>
+            {/*
+              Input 本身是 w-full，在 flex 容器裡需要一層 min-w-0 才收得下去；
+              少了它，選項文字一長就會把右邊的「正確」核取方塊推出卡片外。
+            */}
+            <div className="min-w-0 flex-1">
+              <Input
+                value={option.text}
+                onChange={(e) => setOption(index, { text: e.target.value })}
+                placeholder={`選項 ${option.key} 的內容`}
+              />
+            </div>
             <label className="flex shrink-0 items-center gap-1.5 text-sm">
               <input
                 type="checkbox"
+                className="h-5 w-5 sm:h-4 sm:w-4"
                 checked={option.isCorrect}
                 onChange={() => toggleCorrect(index)}
               />
@@ -185,7 +191,7 @@ export function QuestionForm({ existing }: { existing?: QuestionResponse }) {
           </div>
         ))}
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             variant="secondary"
@@ -218,7 +224,7 @@ export function QuestionForm({ existing }: { existing?: QuestionResponse }) {
           hint="留空代表沒有解析。系統不會自動產生內容。"
         >
           <textarea
-            className="min-h-20 w-full rounded-md border border-input bg-background p-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className={cn(textareaClass, 'min-h-20')}
             value={explanation}
             onChange={(e) => setExplanation(e.target.value)}
           />
@@ -229,13 +235,19 @@ export function QuestionForm({ existing }: { existing?: QuestionResponse }) {
             <Input
               type="number"
               min={1}
+              inputMode="numeric"
               value={sourcePage}
               onChange={(e) => setSourcePage(e.target.value)}
             />
           </Field>
-          <label className="flex items-end gap-2 pb-2 text-sm">
+          {/*
+            `items-end pb-2` 是為了在桌機和左邊的欄位底線對齊。
+            手機單欄時上面沒有東西可對齊，那個 pb-2 只會變成莫名的空白。
+          */}
+          <label className="flex min-h-10 items-center gap-2 text-sm sm:min-h-0 sm:items-end sm:pb-2">
             <input
               type="checkbox"
+              className="h-5 w-5 shrink-0 sm:h-4 sm:w-4"
               checked={reviewRequired}
               onChange={(e) => setReviewRequired(e.target.checked)}
             />
@@ -247,10 +259,15 @@ export function QuestionForm({ existing }: { existing?: QuestionResponse }) {
       {serverError && <ErrorBanner message={serverError.message} details={serverError.details} />}
 
       <div className="flex gap-3">
-        <Button type="submit" disabled={!canSubmit || mutation.isPending}>
+        <Button type="submit" className="flex-1 sm:flex-none" disabled={!canSubmit || mutation.isPending}>
           {mutation.isPending ? '儲存中…' : isEdit ? '儲存變更' : '建立題目'}
         </Button>
-        <Button type="button" variant="ghost" onClick={() => router.back()}>
+        <Button
+          type="button"
+          variant="ghost"
+          className="flex-1 sm:flex-none"
+          onClick={() => router.back()}
+        >
           取消
         </Button>
       </div>

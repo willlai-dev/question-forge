@@ -52,13 +52,13 @@ export default function SetupPage() {
   }
 
   return (
-    <main className="mx-auto max-w-md px-6 py-16">
+    <main className="mx-auto max-w-md px-4 py-12 sm:px-6 sm:py-16">
       <h1 className="text-2xl font-bold tracking-tight">建立你的帳號</h1>
       <p className="mt-2 text-sm text-muted-foreground">
         這是系統的首次啟動。建立帳號後，本頁面會永久停用。
       </p>
 
-      <Card className="mt-8 space-y-5">
+      <Card className="mt-6 space-y-5 sm:mt-8">
         <form
           className="space-y-5"
           onSubmit={form.handleSubmit((values) => mutation.mutate(values))}

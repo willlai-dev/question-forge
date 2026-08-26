@@ -43,15 +43,17 @@ function AiUsageView() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">AI 用量</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">AI 用量</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             每次模型呼叫都會留下紀錄，包含失敗與被限流的次數。
           </p>
         </div>
-        <Link href="/ai/jobs">
-          <Button variant="secondary">任務列表</Button>
+        <Link href="/ai/jobs" className="shrink-0">
+          <Button variant="secondary" className="w-full sm:w-auto">
+            任務列表
+          </Button>
         </Link>
       </div>
 
@@ -61,7 +63,7 @@ function AiUsageView() {
 
       {data && data.totalCalls > 0 && (
         <>
-          <div className="grid gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Stat label="總呼叫次數" value={String(data.totalCalls)} />
             <Stat
               label="成功率"
@@ -84,7 +86,11 @@ function AiUsageView() {
             <h2 className="font-medium">各階段</h2>
             {data.byOperation.map((row) => (
               <Card key={row.operation} className="p-4">
-                <div className="flex items-center justify-between text-sm">
+                {/*
+                  數據那串在手機一定放不進同一列（含成功率、平均延遲與 token 數），
+                  硬擠只會兩邊互相壓縮。窄螢幕直接讓它掉到標題下面一行。
+                */}
+                <div className="flex flex-col gap-1 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                   <span className="font-medium">{OPERATION_LABEL[row.operation] ?? row.operation}</span>
                   <span className="tabular-nums text-muted-foreground">
                     {row.calls} 次

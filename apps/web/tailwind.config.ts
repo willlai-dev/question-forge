@@ -12,6 +12,20 @@ const config: Config = {
       screens: { '2xl': '1400px' },
     },
     extend: {
+      /*
+       * 預設最小斷點 sm 是 640px，對手機來說太粗：
+       * 360px 與 430px 的螢幕之間差了快兩成寬度，卻套用同一組樣式。
+       * xs 補上這一段，主要用在題號網格、統計卡這類會排多欄的地方。
+       */
+      screens: { xs: '475px' },
+      /*
+       * 固定在底部的操作列要避開 iPhone 的 home indicator。
+       *
+       * 定義成 theme 值而不是 globals.css 裡的自訂 class，是為了讓它進入
+       * Tailwind 的工具類排序：手寫 class 會落在產生的 utilities 之後，
+       * 連 `sm:pb-0` 都蓋不掉它，桌機上就會莫名多出一段留白。
+       */
+      padding: { safe: 'calc(env(safe-area-inset-bottom) + 0.75rem)' },
       colors: {
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',

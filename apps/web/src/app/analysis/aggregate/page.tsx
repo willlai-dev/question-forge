@@ -86,15 +86,19 @@ function AggregateAnalysisView() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">學習診斷</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-4">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">學習診斷</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             先由資料庫算出各科目、章節、知識點的正確率與趨勢，再挑出最多 15
             題代表性錯題交給 AI，找出跨知識點的共同錯誤模式。統計本身不需要 AI，隨時都是最新的。
           </p>
         </div>
-        <Button onClick={() => start.mutate()} disabled={running || start.isPending || noData}>
+        <Button
+          className="w-full shrink-0 sm:w-auto"
+          onClick={() => start.mutate()}
+          disabled={running || start.isPending || noData}
+        >
           {running ? '分析中…' : analysis ? '重新分析' : '開始分析'}
         </Button>
       </div>
@@ -157,7 +161,7 @@ function StatsSummary({ data }: { data: AggregateStatsResponse }) {
         ；已排除爭議中、已排除與已刪除題目的作答
       </p>
 
-      <dl className="mt-4 grid gap-4 sm:grid-cols-4">
+      <dl className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Metric label="作答題數" value={String(overall.totalAnswered)} />
         <Metric
           label="正確率"
@@ -186,8 +190,8 @@ function StatsSummary({ data }: { data: AggregateStatsResponse }) {
           )}
           <ul className="mt-2 space-y-1 text-sm">
             {stats.byKnowledgeTag.slice(0, 10).map((tag) => (
-              <li key={tag.id} className="flex items-center justify-between gap-4">
-                <span className="truncate">{tag.name}</span>
+              <li key={tag.id} className="flex items-center justify-between gap-3 sm:gap-4">
+                <span className="min-w-0 truncate">{tag.name}</span>
                 <span className="shrink-0 tabular-nums text-muted-foreground">
                   {tag.accuracy === null ? '—' : `${tag.accuracy}%`}
                   <span className="ml-2">
@@ -267,13 +271,13 @@ function AnalysisContent({ analysis }: { analysis: AggregateAnalysisResponse }) 
           <h2 className="text-lg font-semibold">最薄弱的知識點</h2>
           <ul className="mt-3 space-y-3">
             {analysis.weakestKnowledgeTags.map((tag) => (
-              <li key={tag.tagName} className="flex gap-3">
+              <li key={tag.tagName} className="flex gap-2 sm:gap-3">
                 <span
                   className={`h-fit shrink-0 rounded px-2 py-0.5 text-xs ${SEVERITY_CLASS[tag.severity] ?? ''}`}
                 >
                   {SEVERITY_LABEL[tag.severity] ?? tag.severity}
                 </span>
-                <div>
+                <div className="min-w-0">
                   <p className="text-sm font-medium">
                     {tag.tagName}
                     <span className="ml-2 tabular-nums text-muted-foreground">{tag.accuracy}%</span>
@@ -313,11 +317,11 @@ function AnalysisContent({ analysis }: { analysis: AggregateAnalysisResponse }) 
           <h2 className="text-lg font-semibold">建議複習順序</h2>
           <ol className="mt-3 space-y-2">
             {analysis.reviewPriority.map((item) => (
-              <li key={item.rank} className="flex gap-3 text-sm">
+              <li key={item.rank} className="flex gap-2 text-sm sm:gap-3">
                 <span className="w-6 shrink-0 tabular-nums text-muted-foreground">
                   {item.rank}.
                 </span>
-                <div>
+                <div className="min-w-0">
                   <p className="font-medium">{item.target}</p>
                   <p className="text-muted-foreground">{item.reason}</p>
                 </div>

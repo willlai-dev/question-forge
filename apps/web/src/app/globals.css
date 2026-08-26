@@ -50,10 +50,47 @@
     @apply border-border;
   }
 
+  html {
+    /*
+     * iOS 橫向時會自動放大字級（text auto-sizing），同一頁在直向與橫向的
+     * 字會不一樣大，版面也跟著跑掉。關掉它，字級一律由 Tailwind 決定。
+     */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
   body {
     @apply bg-background text-foreground;
     font-feature-settings:
       'rlig' 1,
       'calt' 1;
+    /*
+     * 手機上絕不允許整頁橫向捲動。
+     * 需要橫向捲的內容（表格、程式碼）自己包一層 overflow-x-auto，
+     * 不要讓它把整個 body 撐寬——那會讓所有其他內容一起偏移。
+     */
+    overflow-x: hidden;
+  }
+
+  /*
+   * 題幹、AI 解析、匯入錯誤訊息裡都可能出現長網址或連續英數字。
+   * 中文會自動換行，這些不會——在 360px 的螢幕上一條就能撐破版面。
+   */
+  body,
+  input,
+  textarea,
+  select,
+  button {
+    overflow-wrap: break-word;
+  }
+
+  /*
+   * 瀏海與底部 home indicator 的留白。
+   * 搭配 layout.tsx 的 viewportFit: 'cover' 使用；桌機上這些值都是 0，
+   * 因此可以無條件套用，不需要另外判斷裝置。
+   */
+  body {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
   }
 }

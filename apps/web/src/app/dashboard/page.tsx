@@ -28,20 +28,20 @@ function DashboardView() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">學習概況</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">學習概況</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             題庫共 {data?.questionCount ?? 0} 題，分布在 {data?.subjectCount ?? 0} 個科目、
             {data?.questionGroupCount ?? 0} 個題組。
           </p>
         </div>
-        <Link href="/quiz/new">
-          <Button>開始作答</Button>
+        <Link href="/quiz/new" className="shrink-0">
+          <Button className="w-full sm:w-auto">開始作答</Button>
         </Link>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="已作答" value={`${data?.answeredCount ?? 0} 題`} />
         <Stat
           label="整體正確率"
@@ -66,9 +66,9 @@ function DashboardView() {
           <h2 className="font-medium">各科目表現</h2>
           {data.bySubject.map((subject) => (
             <Card key={subject.subjectId} className="p-4">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium">{subject.subjectName}</span>
-                <span className="tabular-nums text-muted-foreground">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="min-w-0 truncate font-medium">{subject.subjectName}</span>
+                <span className="shrink-0 tabular-nums text-muted-foreground">
                   {subject.correctCount} / {subject.answeredCount} 題
                   {subject.accuracy !== null && `（${subject.accuracy}%）`}
                 </span>
@@ -112,7 +112,7 @@ function DashboardView() {
               : `/quiz/${session.id}/result`;
           return (
             <Link key={session.id} href={href} className="block">
-              <Card className="flex items-center gap-4 p-4 transition hover:bg-accent/40">
+              <Card className="flex items-start gap-3 p-4 transition hover:bg-accent/40 sm:items-center sm:gap-4">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">
                     {QUIZ_MODE_LABEL[session.mode] ?? session.mode}．{session.totalQuestions} 題

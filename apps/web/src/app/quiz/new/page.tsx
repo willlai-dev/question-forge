@@ -13,7 +13,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 import { AppShell } from '@/components/app-shell';
-import { Button, Card, ErrorBanner, Field } from '@/components/ui';
+import { Button, Card, ErrorBanner, Field, selectClass } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
 
 export default function NewQuizPage() {
@@ -23,9 +23,6 @@ export default function NewQuizPage() {
     </AppShell>
   );
 }
-
-const selectClass =
-  'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 type ScopeLevel = 'subject' | 'chapter' | 'question_group' | 'knowledge_tag';
 
@@ -120,7 +117,7 @@ function NewQuizView() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">開始作答</h1>
+        <h1 className="text-xl font-bold tracking-tight sm:text-2xl">開始作答</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           選擇出題範圍與作答方式，判分完全由程式執行。
         </p>
@@ -161,7 +158,7 @@ function NewQuizView() {
               {chapterIds.length > 0 && (
                 <button
                   type="button"
-                  className="text-xs text-muted-foreground underline hover:text-foreground"
+                  className="py-1 text-xs text-muted-foreground underline hover:text-foreground"
                   onClick={() => setChapterIds([])}
                 >
                   清除（已選 {chapterIds.length}）
@@ -181,10 +178,12 @@ function NewQuizView() {
                 chapters.data?.map((chapter) => (
                   <label
                     key={chapter.id}
-                    className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-sm hover:bg-accent"
+                    // 章節是逐項勾選的清單，每一列都要有足以用手指點中的高度。
+                    className="flex min-h-10 cursor-pointer items-center gap-2 rounded px-1 text-sm hover:bg-accent sm:min-h-0 sm:py-1"
                   >
                     <input
                       type="checkbox"
+                      className="h-5 w-5 shrink-0 sm:h-4 sm:w-4"
                       checked={chapterIds.includes(chapter.id)}
                       onChange={(e) => {
                         setChapterIds((prev) =>
@@ -247,9 +246,10 @@ function NewQuizView() {
           </select>
         </Field>
 
-        <label className="flex items-center gap-2 text-sm">
+        <label className="flex min-h-10 items-start gap-2 text-sm sm:min-h-0 sm:items-center">
           <input
             type="checkbox"
+            className="mt-0.5 h-5 w-5 shrink-0 sm:mt-0 sm:h-4 sm:w-4"
             checked={onlyMistakes}
             onChange={(e) => setOnlyMistakes(e.target.checked)}
           />
@@ -286,6 +286,7 @@ function NewQuizView() {
             <input
               type="number"
               min={1}
+              inputMode="numeric"
               className={selectClass}
               value={questionLimit}
               onChange={(e) => setQuestionLimit(e.target.value)}
@@ -294,18 +295,20 @@ function NewQuizView() {
           </Field>
         </div>
 
-        <div className="space-y-2 text-sm">
-          <label className="flex items-center gap-2">
+        <div className="space-y-1 text-sm sm:space-y-2">
+          <label className="flex min-h-10 items-center gap-2 sm:min-h-0">
             <input
               type="checkbox"
+              className="h-5 w-5 shrink-0 sm:h-4 sm:w-4"
               checked={shuffleOptions}
               onChange={(e) => setShuffleOptions(e.target.checked)}
             />
             隨機排列選項順序
           </label>
-          <label className="flex items-center gap-2">
+          <label className="flex min-h-10 items-center gap-2 sm:min-h-0">
             <input
               type="checkbox"
+              className="h-5 w-5 shrink-0 sm:h-4 sm:w-4"
               checked={allowAnswerChange}
               onChange={(e) => setAllowAnswerChange(e.target.checked)}
             />
@@ -314,8 +317,12 @@ function NewQuizView() {
         </div>
       </Card>
 
-      <div className="flex items-center gap-3">
-        <Button disabled={!canStart || create.isPending} onClick={() => create.mutate()}>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          className="w-full sm:w-auto"
+          disabled={!canStart || create.isPending}
+          onClick={() => create.mutate()}
+        >
           {create.isPending ? '出題中…' : '開始作答'}
         </Button>
         {!canStart && (

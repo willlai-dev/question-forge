@@ -96,13 +96,14 @@ function TagSuggestionsView() {
         <Link href="/tags" className="text-sm text-muted-foreground underline-offset-4 hover:underline">
           ← 回標籤管理
         </Link>
-        <h1 className="mt-3 text-2xl font-bold tracking-tight">標籤建議審核</h1>
+        <h1 className="mt-3 text-xl font-bold tracking-tight sm:text-2xl">標籤建議審核</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           AI 找不到合適的既有標籤時只能提交建議到這裡，不能自行建立正式標籤。
         </p>
       </div>
 
-      <div className="flex gap-2">
+      {/* 五個狀態分頁鈕在手機排不進一列，允許換行。 */}
+      <div className="flex flex-wrap gap-2">
         {[
           { value: 'pending', label: '待審核' },
           { value: 'approved', label: '已核准' },
@@ -160,7 +161,7 @@ function TagSuggestionsView() {
           const badge = STATUS_LABEL[item.status]!;
           return (
             <Card key={item.id} className="space-y-3">
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start justify-between gap-3 sm:gap-4">
                 <div className="min-w-0">
                   <p className="font-medium">{item.suggestedName}</p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
@@ -187,8 +188,12 @@ function TagSuggestionsView() {
 
               {item.status === 'pending' && (
                 <div className="flex flex-wrap items-center gap-2">
+                  {/*
+                    固定 220px 上限在手機會留下右側一大塊空白，
+                    改成「窄螢幕佔滿整列、桌機才收斂到 220px」。
+                  */}
                   <Input
-                    className="max-w-[220px]"
+                    className="w-full sm:max-w-[220px]"
                     placeholder={`核准後的名稱（預設 ${item.suggestedName}）`}
                     value={newName[item.id] ?? ''}
                     onChange={(e) => setNewName((prev) => ({ ...prev, [item.id]: e.target.value }))}

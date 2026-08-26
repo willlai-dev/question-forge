@@ -79,7 +79,7 @@ function ImportsView() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">JSON 匯入</h1>
+        <h1 className="text-xl font-bold tracking-tight sm:text-2xl">JSON 匯入</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           上傳後只會進入暫存區並逐題驗證，確認無誤後才寫入正式題庫。
         </p>
@@ -94,6 +94,7 @@ function ImportsView() {
         <Button
           type="button"
           variant="secondary"
+          className="w-full sm:w-auto"
           disabled={!prompt.data}
           onClick={async () => {
             await navigator.clipboard.writeText(prompt.data!.prompt);
@@ -104,8 +105,9 @@ function ImportsView() {
           {copied ? '已複製到剪貼簿' : '複製 PDF 整理 Prompt'}
         </Button>
         <details className="text-sm">
-          <summary className="cursor-pointer text-muted-foreground">預覽 Prompt 內容</summary>
-          <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs">
+          <summary className="cursor-pointer py-1 text-muted-foreground">預覽 Prompt 內容</summary>
+          {/* prompt 裡有長段的 JSON 範例，一定要允許斷行，否則會撐破卡片。 */}
+          <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs">
             {prompt.data?.prompt ?? '載入中…'}
           </pre>
         </details>
@@ -118,16 +120,21 @@ function ImportsView() {
           <strong className="ml-1">多檔時各檔的科目必須相同。</strong>
         </p>
         {error && <ErrorBanner message={error.message} details={error.details} />}
-        <div className="flex items-center gap-3">
+        {/*
+          檔案選擇器的寬度由「選擇檔案」按鈕加檔名決定，多選時檔名很長。
+          和送出鈕並排會把按鈕擠出畫面，手機一律改成上下排列。
+        */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <input
             ref={fileRef}
             type="file"
             accept=".json,application/json"
             multiple
-            className="text-sm file:mr-3 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-sm"
+            className="min-w-0 flex-1 text-sm file:mr-3 file:min-h-9 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-sm"
           />
           <Button
             type="button"
+            className="w-full shrink-0 sm:w-auto"
             disabled={upload.isPending}
             onClick={() => {
               const files = [...(fileRef.current?.files ?? [])];
@@ -143,12 +150,12 @@ function ImportsView() {
         <h2 className="font-medium">匯入紀錄</h2>
         {batches.data?.length === 0 && <EmptyState title="還沒有任何匯入紀錄" />}
         {batches.data?.map((batch) => (
-          <Card key={batch.id} className="flex items-center gap-4">
+          <Card key={batch.id} className="flex flex-wrap items-center gap-3 sm:gap-4">
             {/*
               整張卡片原本是一個 Link，丟棄按鈕不能放在裡面——
               巢狀在連結內的按鈕點下去會連帶觸發導覽。改成只有內容區是連結。
             */}
-            <Link href={`/imports/${batch.id}`} className="min-w-0 flex-1">
+            <Link href={`/imports/${batch.id}`} className="w-full min-w-0 flex-1 sm:w-auto">
               <p className="truncate font-medium hover:underline">{batch.filename}</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {batch.totalCount} 題 · 錯誤 {batch.errorCount} · 警告 {batch.warningCount}

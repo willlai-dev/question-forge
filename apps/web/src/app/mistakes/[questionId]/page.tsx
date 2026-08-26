@@ -68,9 +68,9 @@ function MistakeDetailView() {
         >
           ← 回錯題本
         </Link>
-        <div className="mt-3 flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">錯題詳情</h1>
+        <div className="mt-3 flex items-start justify-between gap-3 sm:gap-4">
+          <div className="min-w-0">
+            <h1 className="text-lg font-bold tracking-tight sm:text-xl">錯題詳情</h1>
             <p className="mt-1 text-sm text-muted-foreground">
               {data.subjectName}
               {data.chapterName ? ` · ${data.chapterName}` : ''} · {data.questionGroupName} · 第{' '}
@@ -83,7 +83,7 @@ function MistakeDetailView() {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="答錯次數" value={String(data.mistakeCount)} />
         <Stat label="連續答對" value={String(data.consecutiveCorrect)} hint="連續三次即為已掌握" />
         <Stat label="總作答次數" value={String(data.totalAttempts)} />
@@ -101,12 +101,12 @@ function MistakeDetailView() {
             <div
               key={option.key}
               className={cn(
-                'flex items-start gap-3 rounded-md border px-3 py-2 text-sm',
+                'flex items-start gap-2 rounded-md border px-3 py-2 text-sm sm:gap-3',
                 option.isCorrect && 'border-emerald-500 bg-emerald-50',
               )}
             >
-              <span className="font-medium">{option.key}</span>
-              <span className="flex-1 whitespace-pre-wrap">{option.text}</span>
+              <span className="shrink-0 font-medium">{option.key}</span>
+              <span className="min-w-0 flex-1 whitespace-pre-wrap">{option.text}</span>
             </div>
           ))}
         </div>
@@ -161,7 +161,8 @@ function MistakeDetailView() {
                   )
                 }
                 className={cn(
-                  'rounded-full border px-3 py-1 text-sm transition',
+                  // 錯誤類型是一整排小膠囊，最容易點錯的地方；手機上高度拉到 min-h-10。
+                  'min-h-10 rounded-full border px-3 py-1 text-sm transition sm:min-h-0',
                   active ? 'border-primary bg-accent font-medium' : 'hover:bg-accent/50',
                 )}
               >
@@ -170,8 +171,12 @@ function MistakeDetailView() {
             );
           })}
         </div>
-        <div className="flex items-center gap-3">
-          <Button onClick={() => saveErrorTypes.mutate()} disabled={saveErrorTypes.isPending}>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            className="w-full sm:w-auto"
+            onClick={() => saveErrorTypes.mutate()}
+            disabled={saveErrorTypes.isPending}
+          >
             {saveErrorTypes.isPending ? '儲存中…' : '儲存錯誤類型'}
           </Button>
           {data.errorTypes.some((t) => t.source === 'ai') && (
@@ -190,7 +195,10 @@ function MistakeDetailView() {
       <div className="space-y-3">
         <h2 className="font-medium">歷次作答</h2>
         {data.attempts.map((attempt) => (
-          <Card key={attempt.answerId} className="flex items-center gap-4 p-4 text-sm">
+          <Card
+            key={attempt.answerId}
+            className="flex flex-wrap items-center gap-x-3 gap-y-1.5 p-4 text-sm"
+          >
             <span
               className={cn(
                 'shrink-0 rounded-full px-2.5 py-0.5 text-xs',
@@ -204,7 +212,8 @@ function MistakeDetailView() {
             <span className="text-muted-foreground">
               選了 {attempt.selectedAnswers.join('、')}／正確 {attempt.correctAnswers.join('、')}
             </span>
-            <span className="ml-auto text-xs text-muted-foreground">
+            {/* 時間戳在窄螢幕自成一列，不要用 ml-auto 硬推到同一列的右端。 */}
+            <span className="w-full text-xs text-muted-foreground sm:ml-auto sm:w-auto">
               {attempt.responseTimeMs !== null &&
                 `${Math.round(attempt.responseTimeMs / 1000)} 秒 · `}
               {new Date(attempt.answeredAt).toLocaleString('zh-TW')}

@@ -13,7 +13,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 
 import { AppShell } from '@/components/app-shell';
-import { Button, Card, EmptyState, ErrorBanner, Field, Input } from '@/components/ui';
+import { Button, Card, EmptyState, ErrorBanner, Field, Input, selectClass } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 
@@ -24,9 +24,6 @@ export default function TagsPage() {
     </AppShell>
   );
 }
-
-const selectClass =
-  'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 type Tab = 'knowledge' | 'skill' | 'error' | 'alias';
 
@@ -51,35 +48,41 @@ function TagsView() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">標籤管理</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">標籤管理</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             標籤是受控詞彙：AI 只能從這裡挑選，不能自己造新的。
           </p>
         </div>
-        <Link href="/tags/suggestions">
-          <Button variant={pendingCount > 0 ? 'primary' : 'secondary'}>
+        <Link href="/tags/suggestions" className="shrink-0">
+          <Button variant={pendingCount > 0 ? 'primary' : 'secondary'} className="w-full sm:w-auto">
             待審建議{pendingCount > 0 ? ` ${pendingCount}` : ''}
           </Button>
         </Link>
       </div>
 
-      <div className="flex gap-1 border-b">
-        {TABS.map((item) => (
-          <button
-            key={item.key}
-            onClick={() => setTab(item.key)}
-            className={cn(
-              '-mb-px border-b-2 px-4 py-2 text-sm transition',
-              tab === item.key
-                ? 'border-primary font-medium'
-                : 'border-transparent text-muted-foreground hover:text-foreground',
-            )}
-          >
-            {item.label}
-          </button>
-        ))}
+      {/*
+        分頁列讓它自己橫向捲，而不是換行。
+        分頁的底線是一條連續的視覺基準，折成兩行會出現兩條線，看起來像兩組不同的東西。
+      */}
+      <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+        <div className="flex min-w-max gap-1 border-b">
+          {TABS.map((item) => (
+            <button
+              key={item.key}
+              onClick={() => setTab(item.key)}
+              className={cn(
+                '-mb-px whitespace-nowrap border-b-2 px-4 py-2.5 text-sm transition',
+                tab === item.key
+                  ? 'border-primary font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {tab === 'knowledge' && <KnowledgeTagsPanel />}
@@ -159,8 +162,14 @@ function KnowledgeTagsPanel() {
     <div className="space-y-5">
       <Card className="space-y-4">
         <h2 className="font-medium">新增知識點</h2>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-[220px] flex-1">
+        {/*
+          `min-w-[220px]` 加 flex-wrap 在手機是會出事的組合：
+          360px 的螢幕扣掉卡片內距只剩約 328px，兩個欄位排不下就各自佔一列，
+          但 220px 的下限又讓它們無法收窄，右邊會被撐出去。
+          手機直接改成單欄堆疊，最小寬度只在桌機生效。
+        */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+          <div className="sm:min-w-[220px] sm:flex-1">
             <Field label="名稱">
               <Input
                 value={name}
@@ -169,7 +178,7 @@ function KnowledgeTagsPanel() {
               />
             </Field>
           </div>
-          <div className="min-w-[180px]">
+          <div className="sm:min-w-[180px]">
             <Field label="限定科目" hint="不選代表跨科目通用">
               <select
                 className={selectClass}
@@ -185,7 +194,11 @@ function KnowledgeTagsPanel() {
               </select>
             </Field>
           </div>
-          <Button onClick={() => create.mutate()} disabled={!name.trim() || create.isPending}>
+          <Button
+            className="w-full sm:w-auto"
+            onClick={() => create.mutate()}
+            disabled={!name.trim() || create.isPending}
+          >
             新增
           </Button>
         </div>
@@ -239,7 +252,7 @@ function KnowledgeTagsPanel() {
                 {tag.aliases.length > 0 && ` · 別名：${tag.aliases.join('、')}`}
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex w-full flex-wrap gap-2 sm:w-auto">
               <Button variant="secondary" onClick={() => setMergeSource(tag)}>
                 合併
               </Button>
@@ -305,13 +318,17 @@ function SkillTagsPanel() {
         能力類型描述「這題考的是哪一種能力」。系統預設 6 種，可自行新增。
       </p>
 
-      <Card className="flex flex-wrap items-end gap-3">
-        <div className="min-w-[220px] flex-1">
+      <Card className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+        <div className="sm:min-w-[220px] sm:flex-1">
           <Field label="新增能力類型">
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：計算能力" />
           </Field>
         </div>
-        <Button onClick={() => create.mutate()} disabled={!name.trim() || create.isPending}>
+        <Button
+          className="w-full sm:w-auto"
+          onClick={() => create.mutate()}
+          disabled={!name.trim() || create.isPending}
+        >
           新增
         </Button>
       </Card>
@@ -320,7 +337,7 @@ function SkillTagsPanel() {
 
       <div className="space-y-2">
         {tags.data?.map((tag) => (
-          <Card key={tag.id} className="flex items-center gap-3 p-4">
+          <Card key={tag.id} className="flex flex-wrap items-center gap-3 p-4">
             <div className="min-w-0 flex-1">
               <p className="font-medium">
                 {tag.name}
@@ -431,13 +448,13 @@ function AliasesPanel() {
         這裡只需要登錄真正不同的寫法（例如錯字或簡稱）。
       </p>
 
-      <Card className="flex flex-wrap items-end gap-3">
-        <div className="min-w-[200px] flex-1">
+      <Card className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+        <div className="sm:min-w-[200px] sm:flex-1">
           <Field label="別名">
             <Input value={alias} onChange={(e) => setAlias(e.target.value)} placeholder="例如：行政處份" />
           </Field>
         </div>
-        <div className="min-w-[200px] flex-1">
+        <div className="sm:min-w-[200px] sm:flex-1">
           <Field label="對應到">
             <select
               className={selectClass}
@@ -456,6 +473,7 @@ function AliasesPanel() {
           </Field>
         </div>
         <Button
+          className="w-full sm:w-auto"
           onClick={() => create.mutate()}
           disabled={!alias.trim() || !canonicalTagId || create.isPending}
         >
@@ -470,9 +488,11 @@ function AliasesPanel() {
       <div className="space-y-2">
         {aliases.data?.map((item) => (
           <Card key={item.id} className="flex items-center gap-3 p-4 text-sm">
-            <span className="font-medium">{item.alias}</span>
-            <span className="text-muted-foreground">→ {item.canonicalTagName}</span>
-            <Button variant="ghost" className="ml-auto" onClick={() => remove.mutate(item.id)}>
+            <span className="min-w-0 flex-1">
+              <span className="font-medium">{item.alias}</span>
+              <span className="text-muted-foreground"> → {item.canonicalTagName}</span>
+            </span>
+            <Button variant="ghost" className="shrink-0" onClick={() => remove.mutate(item.id)}>
               刪除
             </Button>
           </Card>

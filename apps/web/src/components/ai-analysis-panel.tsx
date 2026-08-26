@@ -174,7 +174,8 @@ export function AiAnalysisPanel({
             三階段分析：規劃查證方向 → 搜尋外部資料 → 產生解析。所有引用都指向實際查到的來源。
           </p>
         </div>
-        <div className="flex gap-2">
+        {/* 三顆按鈕在窄螢幕排不下，允許換行；父層已有 flex-wrap 讓整組先掉到下一列。 */}
+        <div className="flex w-full flex-wrap gap-2 sm:w-auto">
           <Button
             onClick={() => start.mutate(false)}
             disabled={start.isPending || running}
@@ -359,12 +360,12 @@ function AnalysisContent({ data }: { data: QuestionAnalysisResponse }) {
               <div key={source.sourceId} className="flex items-start gap-2 text-sm">
                 {/*
                   來源編號是給「對照引用」用的，不是重點資訊，因此只用等寬窄標記。
-                  同時它也是查看原文的入口：滑上去就能讀到這份來源實際送進模型的內容，
-                  不必離開解析頁去翻筆記或開網頁。
+                  同時它也是查看原文的入口：滑上去（觸控裝置是點一下）就能讀到
+                  這份來源實際送進模型的內容，不必離開解析頁去翻筆記或開網頁。
                 */}
                 <HoverPanel
                   label={`查看 ${source.sourceId} 的原文`}
-                  panelClassName="w-[min(30rem,calc(100vw-3rem))]"
+                  panelClassName="w-[min(30rem,calc(100vw-1.5rem))]"
                   triggerClassName={cn(
                     'mt-0.5 w-6 shrink-0 cursor-help text-right font-mono text-[10px] leading-5 tabular-nums underline decoration-dotted underline-offset-2',
                     source.isUsed ? 'text-foreground' : 'text-muted-foreground/60',
@@ -468,7 +469,10 @@ function SourceContent({
           以上是送進模型的前 {snippet.length} 字，原文共 {source.contentLength} 字。
         </p>
       )}
-      <p className="text-[11px] text-muted-foreground">滑鼠移入可捲動；點編號可釘住不關。</p>
+      <p className="text-[11px] text-muted-foreground">
+        <span className="hidden sm:inline">滑鼠移入可捲動；點編號可釘住不關。</span>
+        <span className="sm:hidden">點編號可開關；點面板外即關閉。</span>
+      </p>
     </div>
   );
 }

@@ -15,7 +15,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 import { AppShell } from '@/components/app-shell';
-import { Button, Card, EmptyState, ErrorBanner } from '@/components/ui';
+import { Button, Card, EmptyState, ErrorBanner, selectClass } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
 import { MASTERY_LABEL } from '@/lib/labels';
 import { cn } from '@/lib/utils';
@@ -27,9 +27,6 @@ export default function MistakesPage() {
     </AppShell>
   );
 }
-
-const selectClass =
-  'h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 function MistakesView() {
   const router = useRouter();
@@ -93,28 +90,33 @@ function MistakesView() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">錯題本</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">錯題本</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             答對一次不會刪除紀錄，只會改變熟練狀態；連續答對三次才算掌握。
           </p>
         </div>
-        <Button onClick={() => practice.mutate()} disabled={practice.isPending || items.length === 0}>
+        <Button
+          className="w-full shrink-0 sm:w-auto"
+          onClick={() => practice.mutate()}
+          disabled={practice.isPending || items.length === 0}
+        >
           {practice.isPending ? '出題中…' : '依目前篩選重新練習'}
         </Button>
       </div>
 
       {error && <ErrorBanner message={error.message} details={error.details} />}
 
-      <div className="grid gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="錯題總數" value={stats.data?.total ?? 0} />
         <Stat label="尚未掌握" value={stats.data?.active ?? 0} />
         <Stat label="進步中" value={stats.data?.improving ?? 0} />
         <Stat label="已掌握" value={stats.data?.mastered ?? 0} />
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      {/* 四個篩選器改用網格，避免 flex-wrap 在窄螢幕排出長短不一的階梯。 */}
+      <div className="grid grid-cols-1 gap-2 xs:grid-cols-2 lg:grid-cols-4">
         <select
           className={selectClass}
           value={subjectId}

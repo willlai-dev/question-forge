@@ -8,6 +8,15 @@ import { cn } from '@/lib/utils';
 /**
  * 最小可用的 UI 原語，樣式沿用 shadcn/ui 的 token（globals.css 中的 CSS 變數）。
  * 隨著頁面變多，會逐步以 shadcn/ui 的正式元件取代。
+ *
+ * ## 觸控與行動裝置的兩條共同規則
+ *
+ * 1. **可點擊元素在手機上至少 40px 高**（`h-10 sm:h-9`）。
+ *    36px 在滑鼠下綽綽有餘，用手指按就會頻繁點錯隔壁那顆。
+ * 2. **輸入類元素在小螢幕維持 16px 字級**（`text-base sm:text-sm`）。
+ *    iOS Safari 只要輸入框字級小於 16px，聚焦時就會自動把整頁放大，
+ *    而且不會自己縮回去——使用者接著就得手動雙指縮放才能繼續操作。
+ *    正確解法是把字放大，不是在 viewport 鎖住 user-scalable（那會擋掉無障礙縮放）。
  */
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -25,7 +34,10 @@ export function Button({ className, variant = 'primary', ...props }: ButtonProps
   return (
     <button
       className={cn(
-        'inline-flex h-9 items-center justify-center rounded-md px-4 text-sm font-medium transition',
+        'inline-flex h-10 items-center justify-center rounded-md px-4 text-sm font-medium transition sm:h-9',
+        // 按鈕文字（例如「依目前篩選重新練習」）在窄螢幕不該被截斷成兩半，
+        // 但也不能撐破容器，因此保留換行能力、只擋住中間斷字。
+        'whitespace-nowrap',
         'disabled:pointer-events-none disabled:opacity-50',
         variants[variant],
         className,
@@ -39,7 +51,7 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
   return (
     <input
       className={cn(
-        'h-9 w-full rounded-md border border-input bg-background px-3 text-sm',
+        'h-10 w-full rounded-md border border-input bg-background px-3 text-base sm:h-9 sm:text-sm',
         'placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         className,
       )}
@@ -47,6 +59,24 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
     />
   );
 }
+
+/**
+ * 下拉與多行輸入的共用樣式。
+ *
+ * 原本每個頁面各自複製一份 `selectClass` 字串，共有七份。
+ * 那代表「手機上字級要 16px」這種規則必須逐頁修，改一次漏一頁就出現
+ * 「只有這一頁點下去會放大」的怪現象。集中在這裡，規則只有一份。
+ */
+export const selectClass = cn(
+  'h-10 w-full rounded-md border border-input bg-background px-3 text-base sm:h-9 sm:text-sm',
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+  'disabled:cursor-not-allowed disabled:opacity-50',
+);
+
+export const textareaClass = cn(
+  'w-full rounded-md border border-input bg-background p-3 text-base sm:text-sm',
+  'placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+);
 
 /**
  * 密碼輸入框，附顯示／隱藏切換。
@@ -66,7 +96,7 @@ export const PasswordInput = forwardRef<
         ref={ref}
         type={visible ? 'text' : 'password'}
         className={cn(
-          'h-9 w-full rounded-md border border-input bg-background px-3 pr-10 text-sm',
+          'h-10 w-full rounded-md border border-input bg-background px-3 pr-11 text-base sm:h-9 sm:text-sm',
           'placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
           className,
         )}
@@ -78,7 +108,7 @@ export const PasswordInput = forwardRef<
         onClick={() => setVisible((v) => !v)}
         aria-label={visible ? '隱藏密碼' : '顯示密碼'}
         title={visible ? '隱藏密碼' : '顯示密碼'}
-        className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-muted-foreground transition hover:text-foreground"
+        className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted-foreground transition hover:text-foreground"
       >
         {visible ? <EyeOff size={16} /> : <Eye size={16} />}
       </button>
@@ -108,7 +138,18 @@ export function Field({
 }
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
-  return <div className={cn('rounded-lg border bg-card p-6', className)}>{children}</div>;
+  // 手機上 24px 的內距等於左右各吃掉螢幕的 7%，題幹會被擠成很窄的一條。
+  return <div className={cn('rounded-lg border bg-card p-4 sm:p-6', className)}>{children}</div>;
+}
+
+/**
+ * 讓寬內容（表格等）在窄螢幕自己橫向捲動的容器。
+ *
+ * 關鍵是 `overflow-x-auto` 必須包在**內容外面**而不是加在 body 上：
+ * 表格撐寬 body 的話，整頁其他區塊會一起跟著位移。
+ */
+export function ScrollArea({ className, children }: { className?: string; children: ReactNode }) {
+  return <div className={cn('-mx-1 overflow-x-auto px-1', className)}>{children}</div>;
 }
 
 /**
@@ -144,7 +185,7 @@ export function ErrorBanner({
 
 export function EmptyState({ title, description }: { title: string; description?: string }) {
   return (
-    <div className="rounded-lg border border-dashed px-6 py-12 text-center">
+    <div className="rounded-lg border border-dashed px-4 py-10 text-center sm:px-6 sm:py-12">
       <p className="font-medium">{title}</p>
       {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
     </div>

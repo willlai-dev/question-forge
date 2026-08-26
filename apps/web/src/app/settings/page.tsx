@@ -11,7 +11,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { AppShell } from '@/components/app-shell';
-import { Button, Card, ErrorBanner, Field } from '@/components/ui';
+import { Button, Card, ErrorBanner, Field, ScrollArea, selectClass } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
 
 export default function SettingsPage() {
@@ -60,7 +60,7 @@ function SettingsView() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">系統設定</h1>
+        <h1 className="text-xl font-bold tracking-tight sm:text-2xl">系統設定</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           作答預設值可以修改；系統資訊為唯讀。金鑰與連線字串只顯示「是否已設定」，永遠不會顯示內容。
         </p>
@@ -100,7 +100,7 @@ function QuizDefaultsForm({
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <Field label="預設模式">
           <select
-            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            className={selectClass}
             value={form.mode}
             onChange={(e) => patch({ mode: e.target.value as QuizDefaults['mode'] })}
           >
@@ -114,7 +114,7 @@ function QuizDefaultsForm({
 
         <Field label="對答案時機">
           <select
-            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            className={selectClass}
             value={form.revealMode}
             onChange={(e) => patch({ revealMode: e.target.value as QuizDefaults['revealMode'] })}
           >
@@ -125,7 +125,7 @@ function QuizDefaultsForm({
 
         <Field label="出題順序">
           <select
-            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            className={selectClass}
             value={form.orderStrategy}
             onChange={(e) =>
               patch({ orderStrategy: e.target.value as QuizDefaults['orderStrategy'] })
@@ -141,7 +141,8 @@ function QuizDefaultsForm({
             type="number"
             min={1}
             max={500}
-            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            inputMode="numeric"
+            className={selectClass}
             value={form.questionLimit ?? ''}
             onChange={(e) =>
               patch({ questionLimit: e.target.value === '' ? null : Number(e.target.value) })
@@ -150,18 +151,20 @@ function QuizDefaultsForm({
         </Field>
       </div>
 
-      <div className="mt-4 space-y-2">
-        <label className="flex items-center gap-2 text-sm">
+      <div className="mt-4 space-y-1 sm:space-y-2">
+        <label className="flex min-h-10 items-start gap-2 text-sm sm:min-h-0 sm:items-center">
           <input
             type="checkbox"
+            className="mt-0.5 h-5 w-5 shrink-0 sm:mt-0 sm:h-4 sm:w-4"
             checked={form.shuffleOptions}
             onChange={(e) => patch({ shuffleOptions: e.target.checked })}
           />
           打亂選項順序（判分一律比對真實答案，不受顯示順序影響）
         </label>
-        <label className="flex items-center gap-2 text-sm">
+        <label className="flex min-h-10 items-center gap-2 text-sm sm:min-h-0">
           <input
             type="checkbox"
+            className="h-5 w-5 shrink-0 sm:h-4 sm:w-4"
             checked={form.allowAnswerChange}
             onChange={(e) => patch({ allowAnswerChange: e.target.checked })}
           />
@@ -170,7 +173,7 @@ function QuizDefaultsForm({
       </div>
 
       <div className="mt-4">
-        <Button onClick={() => onSave(form)} disabled={saving}>
+        <Button className="w-full sm:w-auto" onClick={() => onSave(form)} disabled={saving}>
           {saving ? '儲存中…' : '儲存'}
         </Button>
       </div>
@@ -221,24 +224,32 @@ function PromptVersionsCard({ versions }: { versions: PromptVersionResponse[] })
         版本由程式碼決定：prompt 內容進版控，改內容就要改版號。這裡不提供切換——
         版本是 AI 快取鍵的一部分，切換等於讓既有解析全部失效並需要重新分析。
       </p>
-      <table className="mt-3 w-full text-sm">
-        <thead>
-          <tr className="border-b text-left text-xs text-muted-foreground">
-            <th className="pb-2 font-medium">階段</th>
-            <th className="pb-2 font-medium">版本</th>
-            <th className="pb-2 font-medium">啟用中</th>
-          </tr>
-        </thead>
-        <tbody>
-          {versions.map((version) => (
-            <tr key={version.id} className="border-b last:border-0">
-              <td className="py-2">{OPERATION_LABEL[version.operation] ?? version.operation}</td>
-              <td className="py-2 tabular-nums">{version.version}</td>
-              <td className="py-2">{version.isActive ? '✔' : ''}</td>
+      {/*
+        全站唯一的表格。表格不會自己換行，「① 研究規劃」這種階段名稱在窄螢幕
+        會把整個 <table> 撐得比畫面寬——若不包一層，被撐開的是整頁而不只是表格。
+      */}
+      <ScrollArea className="mt-3">
+        <table className="w-full min-w-[20rem] text-sm">
+          <thead>
+            <tr className="border-b text-left text-xs text-muted-foreground">
+              <th className="pb-2 pr-3 font-medium">階段</th>
+              <th className="pb-2 pr-3 font-medium">版本</th>
+              <th className="pb-2 font-medium">啟用中</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {versions.map((version) => (
+              <tr key={version.id} className="border-b last:border-0">
+                <td className="py-2 pr-3 whitespace-nowrap">
+                  {OPERATION_LABEL[version.operation] ?? version.operation}
+                </td>
+                <td className="py-2 pr-3 tabular-nums">{version.version}</td>
+                <td className="py-2">{version.isActive ? '✔' : ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </ScrollArea>
     </Card>
   );
 }
@@ -270,14 +281,14 @@ function MaintenanceCard() {
       </p>
 
       {preview.data && (
-        <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-3">
+        <dl className="mt-4 grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
           <Metric label="過期網頁快取" value={preview.data.expiredWebDocuments} />
           <Metric label="其中可安全清除" value={preview.data.orphanWebDocuments} />
           <Metric label="過期證據集合（保留）" value={preview.data.expiredEvidenceSets} />
         </dl>
       )}
 
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
         <Button variant="secondary" onClick={() => cleanup.mutate(false)} disabled={cleanup.isPending}>
           清除過期快取
         </Button>
@@ -306,9 +317,9 @@ function MaintenanceCard() {
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex justify-between gap-4">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="truncate font-medium">{value}</dd>
+    <div className="flex justify-between gap-3 sm:gap-4">
+      <dt className="shrink-0 text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 truncate font-medium">{value}</dd>
     </div>
   );
 }

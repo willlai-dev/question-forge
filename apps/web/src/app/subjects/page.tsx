@@ -44,7 +44,7 @@ function SubjectsView() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">科目與章節</h1>
+        <h1 className="text-xl font-bold tracking-tight sm:text-2xl">科目與章節</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           章節可以留空——題組允許直接隸屬於科目。
         </p>
@@ -52,7 +52,7 @@ function SubjectsView() {
 
       <Card>
         <form
-          className="flex items-end gap-3"
+          className="flex flex-col gap-3 sm:flex-row sm:items-end"
           onSubmit={(e) => {
             e.preventDefault();
             if (name.trim()) createSubject.mutate(name.trim());
@@ -67,7 +67,11 @@ function SubjectsView() {
               />
             </Field>
           </div>
-          <Button type="submit" disabled={createSubject.isPending || !name.trim()}>
+          <Button
+            type="submit"
+            className="w-full sm:w-auto"
+            disabled={createSubject.isPending || !name.trim()}
+          >
             新增
           </Button>
         </form>
@@ -86,31 +90,36 @@ function SubjectsView() {
 
       <div className="space-y-3">
         {subjects.data?.map((subject) => (
-          <Card key={subject.id} className="p-0">
-            <div className="flex items-center gap-4 px-6 py-4">
-              <div className="flex-1">
+          <Card key={subject.id} className="p-0 sm:p-0">
+            <div className="flex flex-wrap items-center gap-3 px-4 py-4 sm:gap-4 sm:px-6">
+              <div className="min-w-0 flex-1">
                 <p className="font-medium">{subject.name}</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {subject.chapterCount} 章節 · {subject.questionGroupCount} 題組 ·{' '}
                   {subject.questionCount} 題
                 </p>
               </div>
-              <Button
-                variant="ghost"
-                onClick={() => setExpanded(expanded === subject.id ? null : subject.id)}
-              >
-                {expanded === subject.id ? '收合章節' : '管理章節'}
-              </Button>
-              <Button
-                variant="danger"
-                onClick={() => {
-                  if (confirm(`確定刪除「${subject.name}」？其章節、題組與題目會一併隱藏。`)) {
-                    removeSubject.mutate(subject.id);
-                  }
-                }}
-              >
-                刪除
-              </Button>
+              {/* 兩顆按鈕在窄螢幕會跟科目名稱擠成一團，讓它們整組折到下一列。 */}
+              <div className="flex w-full gap-2 sm:w-auto">
+                <Button
+                  variant="ghost"
+                  className="flex-1 sm:flex-none"
+                  onClick={() => setExpanded(expanded === subject.id ? null : subject.id)}
+                >
+                  {expanded === subject.id ? '收合章節' : '管理章節'}
+                </Button>
+                <Button
+                  variant="danger"
+                  className="flex-1 sm:flex-none"
+                  onClick={() => {
+                    if (confirm(`確定刪除「${subject.name}」？其章節、題組與題目會一併隱藏。`)) {
+                      removeSubject.mutate(subject.id);
+                    }
+                  }}
+                >
+                  刪除
+                </Button>
+              </div>
             </div>
 
             {expanded === subject.id && <ChapterPanel subject={subject} />}
@@ -152,9 +161,9 @@ function ChapterPanel({ subject }: { subject: SubjectResponse }) {
   const error = createChapter.error instanceof ApiRequestError ? createChapter.error : null;
 
   return (
-    <div className="border-t bg-muted/30 px-6 py-4">
+    <div className="border-t bg-muted/30 px-4 py-4 sm:px-6">
       <form
-        className="flex items-end gap-3"
+        className="flex flex-col gap-3 sm:flex-row sm:items-end"
         onSubmit={(e) => {
           e.preventDefault();
           if (name.trim()) createChapter.mutate(name.trim());
@@ -169,7 +178,7 @@ function ChapterPanel({ subject }: { subject: SubjectResponse }) {
             />
           </Field>
         </div>
-        <Button type="submit" variant="secondary" disabled={!name.trim()}>
+        <Button type="submit" variant="secondary" className="w-full sm:w-auto" disabled={!name.trim()}>
           新增章節
         </Button>
       </form>
@@ -189,14 +198,14 @@ function ChapterPanel({ subject }: { subject: SubjectResponse }) {
         {chapters.data?.map((chapter) => (
           <li
             key={chapter.id}
-            className="flex items-center gap-3 rounded-md border bg-background px-4 py-2"
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border bg-background px-4 py-2"
           >
-            <span className="flex-1 text-sm">{chapter.name}</span>
+            <span className="min-w-0 flex-1 text-sm">{chapter.name}</span>
             <span className="text-xs text-muted-foreground">
               {chapter.questionGroupCount} 題組 · {chapter.questionCount} 題
             </span>
             <button
-              className="text-xs text-destructive underline-offset-4 hover:underline"
+              className="shrink-0 py-1 text-xs text-destructive underline-offset-4 hover:underline"
               onClick={() => {
                 if (confirm(`刪除章節「${chapter.name}」？底下的題組會退回直接隸屬科目。`)) {
                   removeChapter.mutate(chapter.id);

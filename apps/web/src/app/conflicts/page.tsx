@@ -58,7 +58,7 @@ function ConflictsView() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">答案爭議</h1>
+        <h1 className="text-xl font-bold tracking-tight sm:text-2xl">答案爭議</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           AI 認為題庫答案可能有誤時會建立這裡的紀錄。
           <strong>AI 不會自己改答案</strong>——只有你可以裁決。待裁決期間該題不計入能力診斷。
@@ -94,12 +94,14 @@ function ConflictsView() {
           const badge = STATUS_LABEL[item.reviewStatus]!;
           return (
             <Card key={item.id} className="space-y-4">
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start justify-between gap-3 sm:gap-4">
                 <div className="min-w-0">
                   <p className="text-xs text-muted-foreground">
                     {item.subjectName} · 第 {item.questionNumber} 題
                   </p>
-                  <p className="mt-1 whitespace-pre-wrap leading-relaxed">{item.questionStem}</p>
+                  <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed sm:text-base">
+                    {item.questionStem}
+                  </p>
                 </div>
                 <span className={cn('shrink-0 rounded-full px-2.5 py-0.5 text-xs', badge.className)}>
                   {badge.label}
@@ -130,15 +132,15 @@ function ConflictsView() {
                   <div
                     key={option.key}
                     className={cn(
-                      'flex items-start gap-3 rounded-md border px-3 py-2 text-sm',
+                      'flex items-start gap-2 rounded-md border px-3 py-2 text-sm sm:gap-3',
                       option.isCorrect && 'border-emerald-500 bg-emerald-50',
                       item.verifiedAnswers.includes(option.key) &&
                         !option.isCorrect &&
                         'border-amber-400 bg-amber-50',
                     )}
                   >
-                    <span className="font-medium">{option.key}</span>
-                    <span className="flex-1">{option.text}</span>
+                    <span className="shrink-0 font-medium">{option.key}</span>
+                    <span className="min-w-0 flex-1">{option.text}</span>
                   </div>
                 ))}
               </div>

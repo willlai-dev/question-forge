@@ -103,7 +103,7 @@ export function QuestionNavigator({
         aria-expanded={open}
         aria-haspopup="true"
         className={cn(
-          'flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm transition',
+          'flex h-10 items-center gap-2 rounded-md border px-3 text-sm transition sm:h-9 sm:py-1.5',
           open ? 'border-primary bg-accent' : 'hover:bg-accent/50',
         )}
       >
@@ -111,12 +111,24 @@ export function QuestionNavigator({
         <span className="text-xs text-muted-foreground">
           {answered} / {items.length || '—'}
         </span>
-        {pinned && <span className="text-xs text-primary">已釘選</span>}
+        {pinned && <span className="hidden text-xs text-primary xs:inline">已釘選</span>}
       </button>
 
       {open && (
+        /*
+          手機上改成底部浮層，而不是掛在按鈕右側。
+          兩個理由：
+            1. 按鈕在窄螢幕會落在畫面靠左，absolute right-0 的面板會直接超出右邊界，
+               而 28rem 的內容本來就塞不進 360px 的螢幕。
+            2. 面板高度不固定（題數愈多愈高），錨在按鈕下方時很容易一半在畫面外。
+               錨在螢幕底部就一定看得完，也剛好落在拇指構得到的位置。
+          z-40 是為了蓋過作答頁那條 z-20 的換題列。
+        */
         <div
-          className="absolute right-0 z-30 mt-2 w-[min(28rem,calc(100vw-2rem))] rounded-lg border bg-background p-3 shadow-lg"
+          className={cn(
+            'fixed inset-x-3 bottom-3 z-40 max-h-[70vh] overflow-y-auto rounded-lg border bg-background p-3 shadow-lg',
+            'sm:absolute sm:inset-x-auto sm:bottom-auto sm:right-0 sm:z-30 sm:mt-2 sm:max-h-none sm:w-[min(28rem,calc(100vw-2rem))] sm:overflow-visible',
+          )}
           onMouseEnter={cancelClose}
           onMouseLeave={scheduleClose}
         >
@@ -127,7 +139,12 @@ export function QuestionNavigator({
 
           {items.length > 0 && (
             <>
-              <div className="grid grid-cols-8 gap-1.5">
+              {/*
+                題號格子是純觸控目標，一定要夠大。
+                手機排 6 欄、大一點的手機 7 欄、桌機才回到 8 欄——
+                硬排 8 欄在 360px 螢幕上每格只剩約 36px，含間距後實際可點區更小。
+              */}
+              <div className="grid grid-cols-6 gap-1.5 xs:grid-cols-7 sm:grid-cols-8">
                 {items.map((item) => (
                   <button
                     key={item.sessionQuestionId}
@@ -137,7 +154,7 @@ export function QuestionNavigator({
                     onFocus={() => setPreview(item)}
                     title={`第 ${item.position} 題`}
                     className={cn(
-                      'relative rounded border py-1.5 text-sm tabular-nums transition',
+                      'relative h-10 rounded border text-sm tabular-nums transition sm:h-auto sm:py-1.5',
                       statusClass(item),
                       item.position === position && 'ring-2 ring-primary ring-offset-1',
                     )}
@@ -199,7 +216,11 @@ export function QuestionNavigator({
                     )}
                   </>
                 ) : (
-                  <span className="text-muted-foreground">滑過題號可預覽題幹。</span>
+                  /* 觸控裝置沒有 hover，叫使用者「滑過」等於叫他做不到的事。 */
+                  <span className="text-muted-foreground">
+                    <span className="hidden sm:inline">滑過題號可預覽題幹。</span>
+                    <span className="sm:hidden">點題號即可跳到該題。</span>
+                  </span>
                 )}
               </div>
 

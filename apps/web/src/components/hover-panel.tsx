@@ -97,7 +97,15 @@ export function HoverPanel({
           setPinned((was) => !was);
           setOpen(true);
         }}
-        className={triggerClassName}
+        className={cn(
+          /*
+           * 觸發區常常只是一個編號或圖示，實際尺寸遠小於手指能穩定點到的範圍
+           * （來源編號只有 24×20px）。用 ::before 往外撐出一圈看不見的感應區，
+           * 而不是加 padding —— padding 會把周圍的排版推開，那些位置是排好的。
+           */
+          'relative touch-manipulation before:absolute before:-inset-2.5 before:content-[""]',
+          triggerClassName,
+        )}
       >
         {children}
       </button>
@@ -108,6 +116,8 @@ export function HoverPanel({
           className={cn(
             'absolute z-30 mt-1 rounded-lg border bg-background p-3 shadow-lg',
             align === 'right' ? 'right-0' : 'left-0',
+            // 面板寬度由呼叫端決定，但無論如何都不該超出螢幕。
+            'max-w-[calc(100vw-1.5rem)]',
             panelClassName,
           )}
           onMouseEnter={cancelClose}

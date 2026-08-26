@@ -4,7 +4,7 @@ import type { QuestionMark, QuestionResponse } from '@repo/contracts';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 
-import { Button } from '@/components/ui';
+import { Button, textareaClass } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 
@@ -88,12 +88,9 @@ export function QuestionMarkControl({
             maxLength={2000}
             autoFocus
             placeholder="例如：這題的但書容易漏看；C 選項和第三章的概念很像"
-            className={cn(
-              'w-full rounded-md border border-input bg-background px-3 py-2 text-sm',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-            )}
+            className={cn(textareaClass, 'px-3 py-2')}
           />
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button
               disabled={save.isPending}
               onClick={() => {

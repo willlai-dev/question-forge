@@ -12,8 +12,9 @@ import { use, useState } from 'react';
 
 import { AppShell } from '@/components/app-shell';
 import { StatusBadge } from '@/app/imports/page';
-import { Button, Card, ErrorBanner, Field, Input } from '@/components/ui';
+import { Button, Card, ErrorBanner, Field, Input, selectClass, textareaClass } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
+import { cn } from '@/lib/utils';
 
 export default function ImportPreviewPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -23,10 +24,6 @@ export default function ImportPreviewPage({ params }: { params: Promise<{ id: st
     </AppShell>
   );
 }
-
-/** 與 quiz/new 相同的下拉樣式，避免兩處各長一個樣子。 */
-const selectClass =
-  'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 function PreviewView({ batchId }: { batchId: string }) {
   const router = useRouter();
@@ -118,9 +115,9 @@ function PreviewView({ batchId }: { batchId: string }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-3 sm:gap-4">
         <div className="min-w-0">
-          <h1 className="truncate text-2xl font-bold tracking-tight">{data?.filename}</h1>
+          <h1 className="truncate text-xl font-bold tracking-tight sm:text-2xl">{data?.filename}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             共 {data?.totalCount ?? 0} 題 · 可匯入 {data?.validCount ?? 0} · 錯誤{' '}
             {data?.errorCount ?? 0} · 警告 {data?.warningCount ?? 0}
@@ -200,17 +197,22 @@ function PreviewView({ batchId }: { batchId: string }) {
           </div>
 
           <div className="flex flex-wrap items-center gap-3 border-t pt-4">
-            <span className="text-sm">
+            <span className="flex-1 text-sm">
               {data?.canCommit
                 ? data.groups.some((g) => !g.canCommit && g.resultingGroupId === null)
                   ? '沒有錯誤的題組可以先寫入，有錯誤的會被跳過，修正後可再匯入一次。'
                   : '沒有阻斷性錯誤，可以寫入正式題庫。'
                 : '仍有題目存在錯誤，請先修正或排除。'}
             </span>
-            <div className="ml-auto flex gap-2">
+            {/*
+              「確認匯入」是不可逆的動作，兩顆按鈕在手機必須各佔一半、
+              明確分開，不能因為擠壓而變成兩個難以分辨的小方塊。
+            */}
+            <div className="flex w-full gap-2 sm:w-auto">
               {/* 不想匯入就要能整批丟掉，否則待確認的批次會一直堆在清單上。 */}
               <Button
                 variant="secondary"
+                className="flex-1 sm:flex-none"
                 disabled={discard.isPending}
                 onClick={() => {
                   if (confirm('確定丟棄這個批次？暫存的題目會一併刪除，正式題庫不受影響。')) {
@@ -221,6 +223,7 @@ function PreviewView({ batchId }: { batchId: string }) {
                 {discard.isPending ? '丟棄中…' : '丟棄不匯入'}
               </Button>
               <Button
+                className="flex-1 sm:flex-none"
                 disabled={!data?.canCommit || commit.isPending}
                 onClick={() => {
                   if (confirm(commitConfirmMessage)) commit.mutate();
@@ -258,7 +261,7 @@ function PreviewView({ batchId }: { batchId: string }) {
                   {group.noteCount > 0 && ` · 筆記 ${group.noteCount}`}
                   {group.sourceFilename ? ` · ${group.sourceFilename}` : ''}
                 </span>
-                <span className="ml-auto text-xs">
+                <span className="text-xs sm:ml-auto">
                   {group.resultingGroupId !== null ? (
                     <span className="text-emerald-700 dark:text-emerald-400">
                       已匯入 {group.committedCount} 題
@@ -381,7 +384,7 @@ function ImportRow({
           </Field>
           <Field label="題幹">
             <textarea
-              className="min-h-20 w-full rounded-md border border-input bg-background p-3 text-sm"
+              className={cn(textareaClass, 'min-h-20')}
               value={stem}
               onChange={(e) => setStem(e.target.value)}
             />

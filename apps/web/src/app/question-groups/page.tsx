@@ -10,8 +10,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { AppShell } from '@/components/app-shell';
-import { Button, Card, EmptyState, ErrorBanner, Field, Input } from '@/components/ui';
+import { Button, Card, EmptyState, ErrorBanner, Field, Input, selectClass } from '@/components/ui';
 import { api, ApiRequestError } from '@/lib/api-client';
+import { cn } from '@/lib/utils';
 
 export default function QuestionGroupsPage() {
   return (
@@ -20,9 +21,6 @@ export default function QuestionGroupsPage() {
     </AppShell>
   );
 }
-
-const selectClass =
-  'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 function QuestionGroupsView() {
   const qc = useQueryClient();
@@ -78,7 +76,7 @@ function QuestionGroupsView() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">題組</h1>
+        <h1 className="text-xl font-bold tracking-tight sm:text-2xl">題組</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           題組必須隸屬科目，章節則為選填。題目將於下一階段加入。
         </p>
@@ -154,16 +152,16 @@ function QuestionGroupsView() {
 
           {error && <ErrorBanner message={error.message} details={error.details} />}
 
-          <Button type="submit" disabled={!canSubmit || createGroup.isPending}>
+          <Button type="submit" className="w-full sm:w-auto" disabled={!canSubmit || createGroup.isPending}>
             建立題組
           </Button>
         </form>
       </Card>
 
-      <div className="flex items-center gap-3">
-        <span className="text-sm text-muted-foreground">篩選科目</span>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+        <span className="shrink-0 text-sm text-muted-foreground">篩選科目</span>
         <select
-          className={`${selectClass} max-w-xs`}
+          className={cn(selectClass, 'sm:max-w-xs')}
           value={filterSubject}
           onChange={(e) => setFilterSubject(e.target.value)}
         >
@@ -180,8 +178,8 @@ function QuestionGroupsView() {
 
       <div className="space-y-3">
         {groups.data?.items.map((group) => (
-          <Card key={group.id} className="flex items-center gap-4">
-            <div className="flex-1">
+          <Card key={group.id} className="flex flex-wrap items-center gap-3 sm:gap-4">
+            <div className="min-w-0 flex-1">
               <p className="font-medium">{group.name}</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {group.subjectName}
@@ -192,6 +190,7 @@ function QuestionGroupsView() {
             </div>
             <Button
               variant="danger"
+              className="shrink-0"
               onClick={() => {
                 if (confirm(`刪除題組「${group.name}」？其題目會一併隱藏。`)) {
                   removeGroup.mutate(group.id);

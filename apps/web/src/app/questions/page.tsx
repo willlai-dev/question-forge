@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 
 import { AppShell } from '@/components/app-shell';
-import { Button, Card, EmptyState, Input } from '@/components/ui';
+import { Button, Card, EmptyState, Input, selectClass } from '@/components/ui';
 import { api } from '@/lib/api-client';
 
 export default function QuestionsPage() {
@@ -16,9 +16,6 @@ export default function QuestionsPage() {
     </AppShell>
   );
 }
-
-const selectClass =
-  'h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 function QuestionsView() {
   const qc = useQueryClient();
@@ -78,26 +75,34 @@ function QuestionsView() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">題目</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">題目</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             共 {pagination?.total ?? 0} 題
           </p>
         </div>
-        <div className="flex gap-2">
-          <Link href="/imports">
-            <Button variant="secondary">JSON 匯入</Button>
+        <div className="flex shrink-0 gap-2">
+          <Link href="/imports" className="flex-1 sm:flex-none">
+            <Button variant="secondary" className="w-full sm:w-auto">
+              JSON 匯入
+            </Button>
           </Link>
-          <Link href="/questions/new">
-            <Button>新增題目</Button>
+          <Link href="/questions/new" className="flex-1 sm:flex-none">
+            <Button className="w-full sm:w-auto">新增題目</Button>
           </Link>
         </div>
       </div>
 
-      <Card className="flex flex-wrap items-center gap-3">
+      {/*
+        六個篩選器用網格排，不是 flex-wrap。
+        flex-wrap 會讓每個下拉依內容長度長成不同寬度，折行後參差不齊；
+        在手機上更慘——「複核狀態不限」這種長選項會獨佔一整列，
+        旁邊留下一大塊空白。網格則保證每列等寬對齊。
+      */}
+      <Card className="grid grid-cols-1 gap-3 xs:grid-cols-2 lg:grid-cols-3">
         <Input
-          className="max-w-xs"
+          className="xs:col-span-2 lg:col-span-1"
           placeholder="搜尋題幹關鍵字"
           value={filters.q}
           onChange={(e) => {
@@ -163,8 +168,8 @@ function QuestionsView() {
       </Card>
 
       {selected.size > 0 && (
-        <Card className="flex items-center gap-3">
-          <span className="text-sm">已選取 {selected.size} 題</span>
+        <Card className="flex flex-wrap items-center gap-3">
+          <span className="w-full text-sm sm:w-auto">已選取 {selected.size} 題</span>
           <Button variant="secondary" onClick={() => bulk.mutate('setReviewRequired')}>
             標記需複核
           </Button>
@@ -189,10 +194,11 @@ function QuestionsView() {
 
       <div className="space-y-2">
         {items.map((question) => (
-          <Card key={question.id} className="flex gap-4 p-4">
+          <Card key={question.id} className="flex gap-3 p-4 sm:gap-4">
+            {/* 預設的核取方塊約 13px，用手指幾乎點不到，手機上放大到 20px。 */}
             <input
               type="checkbox"
-              className="mt-1"
+              className="mt-1 h-5 w-5 shrink-0 sm:h-4 sm:w-4"
               checked={selected.has(question.id)}
               onChange={() => toggle(question.id)}
             />
@@ -233,7 +239,9 @@ function QuestionsView() {
               </p>
             </div>
             <Link href={`/questions/${question.id}/edit`} className="shrink-0">
-              <Button variant="ghost">編輯</Button>
+              <Button variant="ghost" className="px-2 sm:px-4">
+                編輯
+              </Button>
             </Link>
           </Card>
         ))}
