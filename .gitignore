@@ -46,3 +46,10 @@ logs/
 # ---- 本機暫存 ----
 tmp/
 temp/
+
+# ---- 本機部署腳本 ----
+# 這些腳本會寫死本機／內網的位址（例如 Tailscale IP），
+# 而本 repo 是公開的——位址一旦進了 git 歷史就拿不掉了。
+# 換機器時照著 README 的啟動步驟重寫即可。
+restart-prod.ps1
+start-prod.ps1
